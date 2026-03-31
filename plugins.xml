@@ -1,0 +1,25 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<plugins>
+  <pyqgis_plugin name="MapThemeToolbox" version="1.0">
+    <description>All-in-one Map Theme toolbox: Delete, Export, Rename, and Modify theme layers</description>
+    <about>A combined toolbar with five tools for managing QGIS Map Themes: delete selected themes, export to CSV, rename themes, create empty themes, and modify mutual layer visibility across themes.</about>
+    <version>1.0</version>
+    <qgis_minimum_version>3.22</qgis_minimum_version>
+    <homepage>https://github.com/tszyilin/MapThemeToolbox</homepage>
+    <file_name>ThemAltasToolbox.zip</file_name>
+    <icon></icon>
+    <author_name>Safin</author_name>
+    <download_url>https://raw.githubusercontent.com/tszyilin/MapThemeToolbox/main/ThemAltasToolbox.zip</download_url>
+    <uploaded_by>tszyilin</uploaded_by>
+    <create_date>2026-03-31</create_date>
+    <update_date>2026-03-31</update_date>
+    <experimental>False</experimental>
+    <deprecated>False</deprecated>
+    <tracker>https://github.com/tszyilin/MapThemeToolbox/issues</tracker>
+    <repository>https://github.com/tszyilin/MapThemeToolbox</repository>
+    <tags>map themes, layers, visibility</tags>
+    <downloads>0</downloads>
+    <average_vote>0</average_vote>
+    <rating_votes>0</rating_votes>
+  </pyqgis_plugin>
+</plugins>
