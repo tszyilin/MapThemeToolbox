@@ -7,8 +7,9 @@ Toolbar buttons:
   3. Rename Map Themes      (icon_rename.png  — blue pencil)
   4. Create New Themes      (icon_create.png  — teal +)
   5. Modify Theme Layers    (icon_modify.png  — orange layers)
-  6. Sync Setup             (icon_sync.png    — opens full dialog)
-  7. Quick Sync             (icon_sync_on/off — green=ready, grey=not connected)
+  6. Repair Unavailable Layers (mBrokenLayers.svg — QGIS built-in)
+  7. Sync Setup             (icon_sync.png    — opens full dialog)
+  8. Quick Sync             (icon_sync_on/off — green=ready, grey=not connected)
 """
 
 import os
@@ -35,6 +36,16 @@ class MapThemeToolbox:
         path = os.path.join(os.path.dirname(__file__), name)
         return QIcon(path) if os.path.exists(path) else QIcon()
 
+    def _add_action_qgis(self, theme_icon, label, slot, tooltip=""):
+        """Add a toolbar/menu action using a built-in QGIS theme icon."""
+        act = QAction(QgsApplication.getThemeIcon(theme_icon), label, self.iface.mainWindow())
+        act.setToolTip(tooltip or label)
+        act.triggered.connect(slot)
+        self.toolbar.addAction(act)
+        self.iface.addPluginToMenu(MENU, act)
+        self.actions.append(act)
+        return act
+
     def _add_action(self, icon_file, label, slot, tooltip=""):
         act = QAction(self._icon(icon_file), label, self.iface.mainWindow())
         act.setToolTip(tooltip or label)
@@ -58,6 +69,9 @@ class MapThemeToolbox:
                          self.run_create, "Create empty themes one-by-one or from a CSV")
         self._add_action("icon_modify.png", "Modify Theme Layers",
                          self.run_modify, "Toggle mutual layer visibility across themes")
+        self._add_action_qgis("mBrokenLayers.svg", "Repair Unavailable Layers",
+                              self.run_repair,
+                              "Batch re-link broken layer paths after moving project files")
         self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
                          self.run_sync, "Open the sync connection setup dialog")
 
@@ -295,7 +309,14 @@ class MapThemeToolbox:
         QMessageBox.information(self.iface.mainWindow(), "Done",
                                 f"Updated {len(valid)} theme(s) — " + " and ".join(parts) + ".")
 
-    # ── 6. Sync setup (full dialog) ───────────────────────────────────────────
+    # ── 6. Repair unavailable layers ─────────────────────────────────────────
+
+    def run_repair(self):
+        from .dialog_repair_layers import RepairLayersDialog
+        dlg = RepairLayersDialog(parent=self.iface.mainWindow())
+        dlg.exec_()
+
+    # ── 7. Sync setup (full dialog) ───────────────────────────────────────────
 
     def run_sync(self):
         from .dialog_sync_table import SyncTableDialog
