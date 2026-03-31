@@ -69,9 +69,9 @@ class MapThemeToolbox:
                          self.run_create, "Create empty themes one-by-one or from a CSV")
         self._add_action("icon_modify.png", "Modify Theme Layers",
                          self.run_modify, "Toggle mutual layer visibility across themes")
-        self._add_action_qgis("mBrokenLayers.svg", "Repair Unavailable Layers",
-                              self.run_repair,
-                              "Batch re-link broken layer paths after moving project files")
+        self._add_action("icon_repair.png", "Repair Unavailable Layers",
+                         self.run_repair,
+                         "Batch re-link broken layer paths after moving project files")
         self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
                          self.run_sync, "Open the sync connection setup dialog")
 

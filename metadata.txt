@@ -2,7 +2,7 @@
 name=ThemeAndAltasToolbox
 qgisMinimumVersion=3.22
 description=All-in-one Map Theme toolbox: Delete, Export, Rename, and Modify theme layers
-version=1.1
+version=1.2
 author=Safin
 email=
 about=A combined toolbar with five tools for managing QGIS Map Themes: delete selected themes, export to CSV, rename themes, and modify mutual layer visibility across themes.
