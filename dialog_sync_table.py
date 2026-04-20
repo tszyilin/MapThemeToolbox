@@ -515,13 +515,18 @@ class SyncTableDialog(QDialog):
         # Auto-include any new columns added to the file since connection
         new_file_cols = [h for h in self._file_headers if h not in self._cols_to_sync]
         cols = self._cols_to_sync + new_file_cols
-        if new_file_cols:
-            # Persist the expanded list so future syncs remember them
-            self._cols_to_sync = cols
-            CONNECTION.cols_to_sync = cols
+
+        # Detect columns that were previously synced but are now gone from the file
+        removed_cols = [c for c in self._cols_to_sync if c not in self._file_headers]
+        cols = [c for c in cols if c not in removed_cols]
+
+        # Persist the updated list
+        self._cols_to_sync = cols
+        CONNECTION.cols_to_sync = cols
 
         layer_field_names = [f.name() for f in layer.fields()]
-        new_fields = [c for c in cols if c not in layer_field_names]
+        new_fields     = [c for c in cols if c not in layer_field_names]
+        fields_to_drop = [c for c in removed_cols if c in layer_field_names]
 
         self._progress.setVisible(True)
         inserted = 0
@@ -536,7 +541,17 @@ class SyncTableDialog(QDialog):
             return
 
         try:
-            # Add any missing fields first
+            # Drop columns removed from the file
+            if fields_to_drop:
+                for col in fields_to_drop:
+                    idx = layer.fields().indexFromName(col)
+                    if idx >= 0:
+                        if not layer.deleteAttribute(idx):
+                            raise RuntimeError(f"Failed to delete field '{col}' from layer.")
+                layer.updateFields()
+                layer_field_names = [f.name() for f in layer.fields()]
+
+            # Add any new columns from the file
             if new_fields:
                 for col in new_fields:
                     if not layer.addAttribute(QgsField(col, QVariant.String)):
