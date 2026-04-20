@@ -86,22 +86,10 @@ class SyncTableDialog(QDialog):
         self._grp2 = QGroupBox("Step 2 — GeoPackage Layer")
         self._g2   = QVBoxLayout(self._grp2)
 
-        # 2a — no gpkg found: offer to create
-        self._gpkg_create_widget = QWidget()
-        cw = QVBoxLayout(self._gpkg_create_widget)
-        cw.setContentsMargins(0, 0, 0, 0)
-        no_gpkg_lbl = QLabel("⚠  No GeoPackage layers found in the project.")
-        no_gpkg_lbl.setStyleSheet("color:#856404;")
-        cw.addWidget(no_gpkg_lbl)
-        create_hint = QLabel("Load a file first, then click below to create a new GeoPackage from it.")
-        create_hint.setWordWrap(True)
-        create_hint.setStyleSheet("color:#555; font-size:10px;")
-        cw.addWidget(create_hint)
-        self._create_gpkg_btn = QPushButton("🆕  Create GeoPackage from this file…")
-        self._create_gpkg_btn.setEnabled(False)
-        self._create_gpkg_btn.clicked.connect(self._create_gpkg)
-        cw.addWidget(self._create_gpkg_btn)
-        self._g2.addWidget(self._gpkg_create_widget)
+        # 2a — no gpkg found: warning label
+        self._no_gpkg_label = QLabel("⚠  No GeoPackage layers found in the project.")
+        self._no_gpkg_label.setStyleSheet("color:#856404;")
+        self._g2.addWidget(self._no_gpkg_label)
 
         # 2b — gpkg exists: pick layer
         self._gpkg_select_widget = QWidget()
@@ -115,6 +103,14 @@ class SyncTableDialog(QDialog):
         self._mode_label.setStyleSheet("font-style:italic; color:#555; font-size:10px;")
         sw.addWidget(self._mode_label)
         self._g2.addWidget(self._gpkg_select_widget)
+
+        # Always-visible create button (enabled once a file is loaded)
+        self._create_gpkg_btn = QPushButton("🆕  Create new GeoPackage from this file…")
+        self._create_gpkg_btn.setEnabled(False)
+        self._create_gpkg_btn.setStyleSheet("color:#0d6efd; font-size:10px;")
+        self._create_gpkg_btn.setFlat(True)
+        self._create_gpkg_btn.clicked.connect(self._create_gpkg)
+        self._g2.addWidget(self._create_gpkg_btn)
 
         sp.addWidget(self._grp2)
 
@@ -250,7 +246,7 @@ class SyncTableDialog(QDialog):
     def _refresh_gpkg_ui(self):
         layers = self._gpkg_layers()
         has_gpkg = bool(layers)
-        self._gpkg_create_widget.setVisible(not has_gpkg)
+        self._no_gpkg_label.setVisible(not has_gpkg)
         self._gpkg_select_widget.setVisible(has_gpkg)
         if has_gpkg:
             self.layer_combo.blockSignals(True)
