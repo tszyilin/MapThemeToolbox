@@ -512,7 +512,14 @@ class SyncTableDialog(QDialog):
                 "Click 'Change connection' to reconnect.")
             return
 
-        cols = self._cols_to_sync
+        # Auto-include any new columns added to the file since connection
+        new_file_cols = [h for h in self._file_headers if h not in self._cols_to_sync]
+        cols = self._cols_to_sync + new_file_cols
+        if new_file_cols:
+            # Persist the expanded list so future syncs remember them
+            self._cols_to_sync = cols
+            CONNECTION.cols_to_sync = cols
+
         layer_field_names = [f.name() for f in layer.fields()]
         new_fields = [c for c in cols if c not in layer_field_names]
 
