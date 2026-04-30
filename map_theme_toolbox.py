@@ -2,14 +2,15 @@
 """
 Map Theme Toolbox — combined plugin
 Toolbar buttons:
-  1. Delete Map Themes      (icon_delete.png  — red trash)
-  2. Export Themes to CSV   (icon_export.png  — green arrow)
-  3. Rename Map Themes      (icon_rename.png  — blue pencil)
-  4. Create New Themes      (icon_create.png  — teal +)
-  5. Modify Theme Layers    (icon_modify.png  — orange layers)
-  6. Repair Unavailable Layers (mBrokenLayers.svg — QGIS built-in)
-  7. Sync Setup             (icon_sync.png    — opens full dialog)
-  8. Quick Sync             (icon_sync_on/off — green=ready, grey=not connected)
+  1. Delete Map Themes         (icon_delete.png   — red trash)
+  2. Export Themes to CSV      (icon_export.png   — green arrow)
+  3. Rename Map Themes         (icon_rename.png   — blue pencil)
+  4. Create New Themes         (icon_create.png   — teal +)
+  5. Modify Theme Layers       (icon_modify.png   — orange layers)
+  6. Repair Unavailable Layers (icon_repair.png   — crosshair scope)
+  7. Theme Presenter           (icon_present.png  — green screen/play)
+  8. Sync Setup                (icon_sync.png     — opens full dialog)
+  9. Quick Sync                (icon_sync_on/off  — green=ready, grey=not connected)
 """
 
 import os
@@ -72,6 +73,9 @@ class MapThemeToolbox:
         self._add_action("icon_repair.png", "Repair Unavailable Layers",
                          self.run_repair,
                          "Batch re-link broken layer paths after moving project files")
+        self._add_action("icon_present.png", "Theme Presenter",
+                         self.run_present,
+                         "Apply any map theme with a single click")
         self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
                          self.run_sync, "Open the sync connection setup dialog")
 
@@ -316,7 +320,19 @@ class MapThemeToolbox:
         dlg = RepairLayersDialog(parent=self.iface.mainWindow())
         dlg.exec_()
 
-    # ── 7. Sync setup (full dialog) ───────────────────────────────────────────
+    # ── 7. Theme Presenter ────────────────────────────────────────────────────
+
+    def run_present(self):
+        from .dialog_apply_theme import ApplyThemeDialog
+        # Keep a reference so the dialog isn't garbage-collected when it stays open
+        if not hasattr(self, '_present_dlg') or self._present_dlg is None:
+            self._present_dlg = ApplyThemeDialog(self.iface, parent=self.iface.mainWindow())
+            self._present_dlg.finished.connect(lambda: setattr(self, '_present_dlg', None))
+        self._present_dlg.show()
+        self._present_dlg.raise_()
+        self._present_dlg.activateWindow()
+
+    # ── 8. Sync setup (full dialog) ───────────────────────────────────────────
 
     def run_sync(self):
         from .dialog_sync_table import SyncTableDialog
