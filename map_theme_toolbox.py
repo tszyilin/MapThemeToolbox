@@ -16,6 +16,7 @@ Toolbar buttons:
 import os
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsApplication, QgsProject
 
 from .processing_provider import MapThemeToolboxProvider
@@ -32,6 +33,7 @@ class MapThemeToolbox:
         self.toolbar  = self.iface.addToolBar("Map Theme Toolbox")
         self.toolbar.setObjectName("MapThemeToolboxToolbar")
         self._quick_sync_action = None
+        self._present_dock      = None   # ThemePresenterDock instance
 
     def _icon(self, name):
         path = os.path.join(os.path.dirname(__file__), name)
@@ -108,6 +110,10 @@ class MapThemeToolbox:
         del self.toolbar
         if self.provider:
             QgsApplication.processingRegistry().removeProvider(self.provider)
+        if self._present_dock:
+            self.iface.removeDockWidget(self._present_dock)
+            self._present_dock.deleteLater()
+            self._present_dock = None
 
     # ── Connection state callback ─────────────────────────────────────────────
 
@@ -323,14 +329,16 @@ class MapThemeToolbox:
     # ── 7. Theme Presenter ────────────────────────────────────────────────────
 
     def run_present(self):
-        from .dialog_apply_theme import ApplyThemeDialog
-        # Keep a reference so the dialog isn't garbage-collected when it stays open
-        if not hasattr(self, '_present_dlg') or self._present_dlg is None:
-            self._present_dlg = ApplyThemeDialog(self.iface, parent=self.iface.mainWindow())
-            self._present_dlg.finished.connect(lambda: setattr(self, '_present_dlg', None))
-        self._present_dlg.show()
-        self._present_dlg.raise_()
-        self._present_dlg.activateWindow()
+        from .dialog_apply_theme import ThemePresenterDock
+        if self._present_dock is None:
+            self._present_dock = ThemePresenterDock(self.iface, parent=self.iface.mainWindow())
+            self.iface.addDockWidget(Qt.RightDockWidgetArea, self._present_dock)
+        # Toggle: if already visible, hide it; if hidden, show and raise it
+        if self._present_dock.isVisible():
+            self._present_dock.hide()
+        else:
+            self._present_dock.show()
+            self._present_dock.raise_()
 
     # ── 8. Sync setup (full dialog) ───────────────────────────────────────────
 

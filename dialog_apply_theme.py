@@ -1,44 +1,53 @@
 # -*- coding: utf-8 -*-
 """
-Theme Presenter — apply any map theme with a single click.
+Theme Presenter — dockable panel for applying map themes with one click.
 
-Opens a persistent dialog listing all project themes.
-Clicking a theme applies it instantly to the canvas.
-A search box filters the list for projects with many themes.
+Implemented as a QDockWidget so it can be docked, floated, and tabbed
+alongside other panels (Profile Tool, TUFLOW Viewer, etc.).
 """
 
 from qgis.PyQt.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QLineEdit,
-    QPushButton, QAbstractItemView
+    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QListWidget, QListWidgetItem,
+    QLineEdit, QPushButton, QAbstractItemView
 )
-from qgis.PyQt.QtCore import Qt, QSortFilterProxyModel, QStringListModel
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import QgsProject
 
 
-class ApplyThemeDialog(QDialog):
+class ThemePresenterDock(QDockWidget):
 
     def __init__(self, iface, parent=None):
-        super().__init__(parent)
-        self.iface   = iface
-        self.setWindowTitle("Theme Presenter")
-        self.setMinimumSize(300, 450)
-        # Stay on top but non-blocking so canvas is still interactive
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-
+        super().__init__("Theme Presenter", parent)
+        self.iface          = iface
         self._current_theme = None
+
+        # Allow docking on left, right, and bottom — matches typical panel behaviour
+        self.setAllowedAreas(
+            Qt.LeftDockWidgetArea |
+            Qt.RightDockWidgetArea |
+            Qt.BottomDockWidgetArea
+        )
+        self.setFeatures(
+            QDockWidget.DockWidgetMovable |
+            QDockWidget.DockWidgetFloatable |
+            QDockWidget.DockWidgetClosable
+        )
+
         self._build_ui()
         self._populate()
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        container = QWidget()
+        layout    = QVBoxLayout(container)
+        layout.setContentsMargins(6, 6, 6, 6)
 
-        # Header
+        # Hint
         hdr = QLabel("Click a theme to apply it instantly.")
-        hdr.setStyleSheet("color:#555; font-size:10px; padding-bottom:4px;")
+        hdr.setStyleSheet("color:#555; font-size:10px; padding-bottom:2px;")
         layout.addWidget(hdr)
 
         # Search box
@@ -56,27 +65,22 @@ class ApplyThemeDialog(QDialog):
         self._list.setSpacing(2)
         layout.addWidget(self._list)
 
-        # Current theme label
+        # Active theme banner
         self._status = QLabel("No theme applied yet.")
         self._status.setWordWrap(True)
         self._status.setStyleSheet(
             "background:#d4edda; color:#155724; border:1px solid #c3e6cb; "
-            "border-radius:4px; padding:6px; font-size:10px;"
+            "border-radius:4px; padding:5px; font-size:10px;"
         )
         layout.addWidget(self._status)
 
-        # Buttons row
-        btn_row = QHBoxLayout()
-        refresh_btn = QPushButton("↻  Refresh")
-        refresh_btn.setFixedWidth(90)
+        # Refresh button
+        refresh_btn = QPushButton("↻  Refresh List")
         refresh_btn.setToolTip("Reload theme list from project")
         refresh_btn.clicked.connect(self._populate)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.close)
-        btn_row.addWidget(refresh_btn)
-        btn_row.addStretch()
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
+        layout.addWidget(refresh_btn)
+
+        self.setWidget(container)
 
     # ── Data ──────────────────────────────────────────────────────────────────
 
@@ -98,8 +102,6 @@ class ApplyThemeDialog(QDialog):
         for name in themes:
             item = QListWidgetItem(f"  {name}")
             item.setData(Qt.UserRole, name)
-            item.setSizeHint(item.sizeHint().__class__(
-                item.sizeHint().width(), 28))
             if name == self._current_theme:
                 item.setFont(bold)
                 item.setForeground(QColor("#155724"))
@@ -131,4 +133,4 @@ class ApplyThemeDialog(QDialog):
 
         self._current_theme = name
         self._status.setText(f"✅  Applied: <b>{name}</b>")
-        self._populate()   # refresh to highlight active theme
+        self._populate()
