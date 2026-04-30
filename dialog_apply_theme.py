@@ -4,12 +4,20 @@ Theme Presenter — dockable panel for applying map themes with one click.
 
 Implemented as a QDockWidget so it can be docked, floated, and tabbed
 alongside other panels (Profile Tool, TUFLOW Viewer, etc.).
+
+Operations available:
+  • Click theme  — apply instantly to canvas
+  • Add          — create new empty theme (all layers off)
+  • Rename       — rename the selected theme
+  • Replace      — overwrite selected theme with current canvas state
+  • Delete       — delete the selected theme
 """
 
 from qgis.PyQt.QtWidgets import (
-    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QListWidget, QListWidgetItem,
-    QLineEdit, QPushButton, QAbstractItemView
+    QLineEdit, QPushButton, QAbstractItemView,
+    QInputDialog, QMessageBox
 )
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor, QFont
@@ -23,7 +31,6 @@ class ThemePresenterDock(QDockWidget):
         self.iface          = iface
         self._current_theme = None
 
-        # Allow docking on left, right, and bottom — matches typical panel behaviour
         self.setAllowedAreas(
             Qt.LeftDockWidgetArea |
             Qt.RightDockWidgetArea |
@@ -44,6 +51,7 @@ class ThemePresenterDock(QDockWidget):
         container = QWidget()
         layout    = QVBoxLayout(container)
         layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
 
         # Hint
         hdr = QLabel("Click a theme to apply it instantly.")
@@ -65,6 +73,33 @@ class ThemePresenterDock(QDockWidget):
         self._list.setSpacing(2)
         layout.addWidget(self._list)
 
+        # ── Action buttons (2×2 grid) ─────────────────────────────────────────
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(4)
+
+        self._btn_add     = QPushButton("➕  Add")
+        self._btn_rename  = QPushButton("✏️  Rename")
+        self._btn_replace = QPushButton("🔄  Replace")
+        self._btn_delete  = QPushButton("🗑  Delete")
+
+        self._btn_add.setToolTip("Create a new empty theme (all layers off)")
+        self._btn_rename.setToolTip("Rename the selected theme")
+        self._btn_replace.setToolTip("Overwrite selected theme with current canvas state")
+        self._btn_delete.setToolTip("Delete the selected theme")
+
+        self._btn_delete.setStyleSheet("color:#c0392b;")
+
+        self._btn_add.clicked.connect(self._on_add)
+        self._btn_rename.clicked.connect(self._on_rename)
+        self._btn_replace.clicked.connect(self._on_replace)
+        self._btn_delete.clicked.connect(self._on_delete)
+
+        btn_grid.addWidget(self._btn_add,     0, 0)
+        btn_grid.addWidget(self._btn_rename,  0, 1)
+        btn_grid.addWidget(self._btn_replace, 1, 0)
+        btn_grid.addWidget(self._btn_delete,  1, 1)
+        layout.addLayout(btn_grid)
+
         # Active theme banner
         self._status = QLabel("No theme applied yet.")
         self._status.setWordWrap(True)
@@ -82,11 +117,35 @@ class ThemePresenterDock(QDockWidget):
 
         self.setWidget(container)
 
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _tc(self):
+        return QgsProject.instance().mapThemeCollection()
+
+    def _root(self):
+        return QgsProject.instance().layerTreeRoot()
+
+    def _model(self):
+        return self.iface.layerTreeView().layerTreeModel()
+
+    def _selected_theme(self):
+        """Return the name of the currently selected list item, or None."""
+        item = self._list.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+    def _require_selection(self):
+        name = self._selected_theme()
+        if not name:
+            QMessageBox.warning(self, "No Theme Selected",
+                                "Please click a theme in the list first.")
+        return name
+
     # ── Data ──────────────────────────────────────────────────────────────────
 
     def _populate(self):
+        selected = self._selected_theme()   # remember selection across refresh
         self._list.clear()
-        tc     = QgsProject.instance().mapThemeCollection()
+        tc     = self._tc()
         themes = sorted(tc.mapThemes(), key=str.casefold)
 
         if not themes:
@@ -107,6 +166,8 @@ class ThemePresenterDock(QDockWidget):
                 item.setForeground(QColor("#155724"))
                 item.setBackground(QColor("#d4edda"))
             self._list.addItem(item)
+            if name == selected:
+                self._list.setCurrentItem(item)
 
         self._filter(self._search.text())
 
@@ -117,20 +178,102 @@ class ThemePresenterDock(QDockWidget):
             name = (item.data(Qt.UserRole) or "").casefold()
             item.setHidden(bool(text) and text not in name)
 
-    # ── Apply ─────────────────────────────────────────────────────────────────
+    # ── Apply (click) ─────────────────────────────────────────────────────────
 
     def _on_theme_clicked(self, item):
         name = item.data(Qt.UserRole)
         if not name:
             return
-
-        tc    = QgsProject.instance().mapThemeCollection()
-        root  = QgsProject.instance().layerTreeRoot()
-        model = self.iface.layerTreeView().layerTreeModel()
-
-        tc.applyTheme(name, root, model)
+        self._tc().applyTheme(name, self._root(), self._model())
         self.iface.mapCanvas().refresh()
-
         self._current_theme = name
         self._status.setText(f"✅  Applied: <b>{name}</b>")
+        self._populate()
+
+    # ── Add ───────────────────────────────────────────────────────────────────
+
+    def _on_add(self):
+        tc = self._tc()
+        name, ok = QInputDialog.getText(self, "Add Theme", "New theme name:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        if name in tc.mapThemes():
+            QMessageBox.warning(self, "Already Exists",
+                                f"A theme named '{name}' already exists.")
+            return
+
+        # Create with all layers off (consistent with Create Themes tool)
+        root       = self._root()
+        all_nodes  = root.findLayers()
+        saved      = {n.layerId(): n.itemVisibilityChecked() for n in all_nodes}
+        for n in all_nodes:
+            n.setItemVisibilityChecked(False)
+        state = tc.createThemeFromCurrentState(root, self._model())
+        for n in all_nodes:
+            n.setItemVisibilityChecked(saved.get(n.layerId(), True))
+
+        tc.insert(name, state)
+        self._status.setText(f"➕  Created: <b>{name}</b>")
+        self._populate()
+
+    # ── Rename ────────────────────────────────────────────────────────────────
+
+    def _on_rename(self):
+        old = self._require_selection()
+        if not old:
+            return
+        tc = self._tc()
+        new, ok = QInputDialog.getText(self, "Rename Theme",
+                                       "New name:", text=old)
+        new = new.strip()
+        if not ok or not new or new == old:
+            return
+        if new in tc.mapThemes():
+            QMessageBox.warning(self, "Already Exists",
+                                f"A theme named '{new}' already exists.")
+            return
+        tc.insert(new, tc.mapThemeState(old))
+        tc.removeMapTheme(old)
+        if self._current_theme == old:
+            self._current_theme = new
+            self._status.setText(f"✅  Applied: <b>{new}</b>")
+        self._populate()
+
+    # ── Replace ───────────────────────────────────────────────────────────────
+
+    def _on_replace(self):
+        name = self._require_selection()
+        if not name:
+            return
+        reply = QMessageBox.question(
+            self, "Replace Theme",
+            f"Overwrite <b>{name}</b> with the current canvas state?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        tc    = self._tc()
+        state = tc.createThemeFromCurrentState(self._root(), self._model())
+        tc.update(name, state)
+        self._status.setText(f"🔄  Replaced: <b>{name}</b>")
+        self._populate()
+
+    # ── Delete ────────────────────────────────────────────────────────────────
+
+    def _on_delete(self):
+        name = self._require_selection()
+        if not name:
+            return
+        reply = QMessageBox.question(
+            self, "Delete Theme",
+            f"Delete theme <b>{name}</b>? This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._tc().removeMapTheme(name)
+        if self._current_theme == name:
+            self._current_theme = None
+            self._status.setText("No theme applied yet.")
         self._populate()
