@@ -333,7 +333,8 @@ class MapThemeToolbox:
         if self._present_dock is None:
             self._present_dock = ThemePresenterDock(self.iface, parent=self.iface.mainWindow())
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self._present_dock)
-        # Toggle: if already visible, hide it; if hidden, show and raise it
+            return   # already visible after addDockWidget — skip the toggle
+        # Subsequent clicks: toggle visibility
         if self._present_dock.isVisible():
             self._present_dock.hide()
         else:
