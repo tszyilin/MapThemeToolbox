@@ -196,16 +196,10 @@ class ThemePresenterDock(QDockWidget):
         tc   = self._tc()
         root = self._root()
 
-        # If no theme is currently active the canvas shows a custom/unsaved
-        # state — capture it directly.  If a theme is active, create empty.
-        use_current = self._current_theme is None
-
-        if use_current:
-            hint = "New theme name:\n(will be created from the current canvas state)"
-        else:
-            hint = "New theme name:\n(will be created with all layers turned off)"
-
-        name, ok = QInputDialog.getText(self, "Add Theme", hint)
+        name, ok = QInputDialog.getText(
+            self, "Add Theme",
+            "New theme name:\n(will be saved from the current canvas state)"
+        )
         name = name.strip()
         if not ok or not name:
             return
@@ -214,22 +208,10 @@ class ThemePresenterDock(QDockWidget):
                                 f"A theme named '{name}' already exists.")
             return
 
-        if use_current:
-            # Capture whatever is currently shown on the canvas
-            state = tc.createThemeFromCurrentState(root, self._model())
-        else:
-            # Create empty — turn all layers off, capture, then restore
-            all_nodes = root.findLayers()
-            saved     = {n.layerId(): n.itemVisibilityChecked() for n in all_nodes}
-            for n in all_nodes:
-                n.setItemVisibilityChecked(False)
-            state = tc.createThemeFromCurrentState(root, self._model())
-            for n in all_nodes:
-                n.setItemVisibilityChecked(saved.get(n.layerId(), True))
-
+        # Always capture whatever is currently shown on the canvas
+        state = tc.createThemeFromCurrentState(root, self._model())
         tc.insert(name, state)
-        src = "current canvas" if use_current else "empty"
-        self._status.setText(f"➕  Created: <b>{name}</b>  ({src})")
+        self._status.setText(f"➕  Created: <b>{name}</b>  (from current canvas)")
         self._populate()
 
     # ── Rename ────────────────────────────────────────────────────────────────
