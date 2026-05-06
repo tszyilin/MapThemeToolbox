@@ -2,17 +2,19 @@
 """
 Theme Presenter — dockable panel for applying map themes with one click.
 
-Grouping is stored in QgsProject custom variable 'mtt_theme_groups' as JSON
-{theme_name: group_name}.  The actual QGIS theme names are NEVER changed.
+Grouping and order are stored in QgsProject custom variables:
+  mtt_theme_groups  →  {theme_name: group_name}
+  mtt_theme_order   →  [theme_name, ...]  (display order)
 
-Operations available:
-  • Click theme    — apply instantly to canvas
-  • Add            — create new theme from current canvas state
-  • Rename         — rename the selected theme
-  • Replace        — overwrite selected theme with current canvas state
-  • Delete         — delete the selected theme
-  • Create Group   — pick themes and assign them to a named group
-  • Ungroup        — remove the selected theme from its group
+The actual QGIS theme names are NEVER changed.
+
+Drag-and-drop:
+  • Drag within a group  — reorder
+  • Drag to a different group header  — move to that group
+  • Drag to blank space / root level  — ungroup
+
+Buttons:
+  Add | Rename | Replace | Delete | Create Group | Ungroup
 """
 
 import json
@@ -29,14 +31,59 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import QgsProject
 
-GROUP_VAR = "mtt_theme_groups"   # key in QgsProject.customVariables()
+GROUP_VAR = "mtt_theme_groups"   # {theme_name: group_name}
+ORDER_VAR = "mtt_theme_order"    # [theme_name, ...]
+
+# Extra data role to store the group name on group-header items
+GROUP_NAME_ROLE = Qt.UserRole + 1
+
+
+# ── Drag-and-drop tree ────────────────────────────────────────────────────────
+
+class ThemeTree(QTreeWidget):
+    """
+    QTreeWidget that supports drag-and-drop for reordering and regrouping.
+    After every drop it calls dock._rebuild_from_tree() to persist the change.
+    """
+
+    def __init__(self, dock, parent=None):
+        super().__init__(parent)
+        self._dock = dock
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+
+    def startDrag(self, supported_actions):
+        """Block dragging of group-header items (they have no UserRole name)."""
+        item = self.currentItem()
+        if item is None or item.data(0, Qt.UserRole) is None:
+            return
+        super().startDrag(supported_actions)
+
+    def dropEvent(self, event):
+        """
+        Block dropping a theme ONTO another theme leaf (would nest it).
+        Otherwise let Qt move the item, then rebuild metadata from the new tree.
+        """
+        target    = self.itemAt(event.pos())
+        indicator = self.dropIndicatorPosition()
+
+        # Reject: dropping a theme directly on top of another theme
+        if (target is not None
+                and target.data(0, Qt.UserRole) is not None   # target is a leaf
+                and indicator == QAbstractItemView.OnItem):
+            event.ignore()
+            return
+
+        super().dropEvent(event)
+        self._dock._rebuild_from_tree()
 
 
 # ── Create Group dialog ───────────────────────────────────────────────────────
 
 class CreateGroupDialog(QDialog):
-    """Pick a group name + select which themes to assign to it."""
-
     def __init__(self, themes, groups_map, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Create / Move into Group")
@@ -52,7 +99,6 @@ class CreateGroupDialog(QDialog):
         layout.addWidget(self._name_edit)
 
         layout.addWidget(QLabel("<b>Themes to add to this group:</b>"))
-
         hint = QLabel("Hold Ctrl to select multiple.  Current group shown in brackets.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#666; font-size:10px;")
@@ -61,9 +107,9 @@ class CreateGroupDialog(QDialog):
         self._list = QListWidget()
         self._list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         for theme in sorted(themes, key=str.casefold):
-            grp = groups_map.get(theme)
+            grp   = groups_map.get(theme)
             label = f"{theme}  [{grp}]" if grp else theme
-            item = QListWidgetItem(label)
+            item  = QListWidgetItem(label)
             item.setData(Qt.UserRole, theme)
             if grp:
                 item.setForeground(QColor("#1a5276"))
@@ -113,20 +159,20 @@ class ThemePresenterDock(QDockWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        # Hint
-        hdr = QLabel("Click a theme to apply it instantly.")
+        hdr = QLabel("Click to apply · Drag to reorder or move between groups.")
+        hdr.setWordWrap(True)
         hdr.setStyleSheet("color:#555; font-size:10px; padding-bottom:2px;")
         layout.addWidget(hdr)
 
-        # Search box
+        # Search
         self._search = QLineEdit()
         self._search.setPlaceholderText("🔍  Filter themes…")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._filter)
         layout.addWidget(self._search)
 
-        # Theme tree
-        self._list = QTreeWidget()
+        # Drag-enabled tree
+        self._list = ThemeTree(self)
         self._list.setHeaderHidden(True)
         self._list.setSelectionMode(QAbstractItemView.SingleSelection)
         self._list.setAlternatingRowColors(True)
@@ -160,7 +206,7 @@ class ThemePresenterDock(QDockWidget):
         btn_grid.addWidget(self._btn_delete,  1, 1)
         layout.addLayout(btn_grid)
 
-        # ── Group buttons row ─────────────────────────────────────────────────
+        # ── Group buttons ─────────────────────────────────────────────────────
         grp_grid = QGridLayout()
         grp_grid.setSpacing(4)
 
@@ -168,10 +214,11 @@ class ThemePresenterDock(QDockWidget):
         self._btn_ungroup = QPushButton("↩  Ungroup")
 
         self._btn_group.setToolTip(
-            "Select themes to assign to a named group.\n"
-            "Theme names are NOT changed — grouping is display-only."
-        )
-        self._btn_ungroup.setToolTip("Remove the selected theme from its group")
+            "Assign selected themes to a named group.\n"
+            "You can also drag themes between groups.")
+        self._btn_ungroup.setToolTip(
+            "Remove the selected theme from its group.\n"
+            "You can also drag it out of the group folder.")
         self._btn_ungroup.setEnabled(False)
 
         self._btn_group.clicked.connect(self._on_create_group)
@@ -181,7 +228,7 @@ class ThemePresenterDock(QDockWidget):
         grp_grid.addWidget(self._btn_ungroup, 0, 1)
         layout.addLayout(grp_grid)
 
-        # Active theme banner
+        # Status banner
         self._status = QLabel("No theme applied yet.")
         self._status.setWordWrap(True)
         self._status.setStyleSheet(
@@ -190,7 +237,7 @@ class ThemePresenterDock(QDockWidget):
         )
         layout.addWidget(self._status)
 
-        # Refresh button
+        # Refresh
         refresh_btn = QPushButton("↻  Refresh List")
         refresh_btn.setToolTip("Reload theme list from project")
         refresh_btn.clicked.connect(self._populate)
@@ -198,31 +245,69 @@ class ThemePresenterDock(QDockWidget):
 
         self.setWidget(container)
 
-    # ── Group metadata helpers ────────────────────────────────────────────────
+    # ── Project-variable persistence ──────────────────────────────────────────
 
     def _load_groups(self):
-        """Return {theme_name: group_name} from project custom variables."""
         raw = QgsProject.instance().customVariables().get(GROUP_VAR, "")
-        if not raw:
-            return {}
         try:
-            return json.loads(raw)
+            return json.loads(raw) if raw else {}
         except Exception:
             return {}
 
     def _save_groups(self, mapping):
-        """Persist {theme_name: group_name} into project custom variables."""
-        variables = QgsProject.instance().customVariables()
-        variables[GROUP_VAR] = json.dumps(mapping, ensure_ascii=False)
-        QgsProject.instance().setCustomVariables(variables)
+        v = QgsProject.instance().customVariables()
+        v[GROUP_VAR] = json.dumps(mapping, ensure_ascii=False)
+        QgsProject.instance().setCustomVariables(v)
 
-    def _clean_groups(self, mapping, existing_themes):
-        """Remove stale entries for themes that no longer exist."""
-        stale = [t for t in mapping if t not in existing_themes]
-        changed = bool(stale)
+    def _load_order(self):
+        raw = QgsProject.instance().customVariables().get(ORDER_VAR, "")
+        try:
+            return json.loads(raw) if raw else []
+        except Exception:
+            return []
+
+    def _save_order(self, order):
+        v = QgsProject.instance().customVariables()
+        v[ORDER_VAR] = json.dumps(order, ensure_ascii=False)
+        QgsProject.instance().setCustomVariables(v)
+
+    def _clean_groups(self, mapping, existing):
+        stale = [t for t in mapping if t not in existing]
         for t in stale:
             del mapping[t]
-        return changed
+        return bool(stale)
+
+    # ── Rebuild metadata from current tree (called after drag-drop) ───────────
+
+    def _rebuild_from_tree(self):
+        """
+        Walk the tree as Qt left it after a drop, extract the new
+        group assignments and display order, persist them, then repopulate.
+        """
+        groups_map = {}
+        order      = []
+
+        root = self._list.invisibleRootItem()
+        for i in range(root.childCount()):
+            item       = root.child(i)
+            theme_name = item.data(0, Qt.UserRole)
+
+            if theme_name is not None:
+                # Root-level leaf = ungrouped
+                order.append(theme_name)
+            else:
+                # Group header
+                group_name = item.data(0, GROUP_NAME_ROLE)
+                for j in range(item.childCount()):
+                    leaf      = item.child(j)
+                    leaf_name = leaf.data(0, Qt.UserRole)
+                    if leaf_name:
+                        groups_map[leaf_name] = group_name
+                        order.append(leaf_name)
+
+        self._save_groups(groups_map)
+        self._save_order(order)
+        self._populate()   # redraw cleanly
 
     # ── Core helpers ──────────────────────────────────────────────────────────
 
@@ -236,11 +321,8 @@ class ThemePresenterDock(QDockWidget):
         return self.iface.layerTreeView().layerTreeModel()
 
     def _selected_theme(self):
-        """Return the full QGIS theme name of the selected leaf, or None."""
         item = self._list.currentItem()
-        if item is None:
-            return None
-        return item.data(0, Qt.UserRole)   # None for group headers
+        return item.data(0, Qt.UserRole) if item else None
 
     def _require_selection(self):
         name = self._selected_theme()
@@ -249,51 +331,61 @@ class ThemePresenterDock(QDockWidget):
                                 "Please click a theme in the list first.")
         return name
 
+    def _update_ungroup_btn(self):
+        name = self._selected_theme()
+        self._btn_ungroup.setEnabled(
+            bool(name) and name in self._load_groups()
+        )
+
     # ── Data ──────────────────────────────────────────────────────────────────
 
     def _populate(self):
-        selected    = self._selected_theme()
+        selected   = self._selected_theme()
         self._list.clear()
-        tc          = self._tc()
-        all_themes  = set(tc.mapThemes())
-        themes      = sorted(all_themes, key=str.casefold)
-
-        # Load + clean group map
+        tc         = self._tc()
+        all_themes = set(tc.mapThemes())
         groups_map = self._load_groups()
+        saved_order = self._load_order()
+
         if self._clean_groups(groups_map, all_themes):
             self._save_groups(groups_map)
 
-        if not themes:
-            placeholder = QTreeWidgetItem(self._list, ["  (no themes in project)"])
-            placeholder.setFlags(placeholder.flags() & ~Qt.ItemIsEnabled)
-            placeholder.setForeground(0, QColor("#999"))
+        if not all_themes:
+            ph = QTreeWidgetItem(self._list, ["  (no themes in project)"])
+            ph.setFlags(ph.flags() & ~Qt.ItemIsEnabled)
+            ph.setForeground(0, QColor("#999"))
             self._btn_ungroup.setEnabled(False)
             return
 
-        bold = QFont()
-        bold.setBold(True)
-        group_bold = QFont()
-        group_bold.setBold(True)
+        # Sort by saved order first, alphabetical for themes not yet in the list
+        order_map = {n: i for i, n in enumerate(saved_order)}
+        themes    = sorted(all_themes,
+                           key=lambda n: (order_map.get(n, len(saved_order)),
+                                          n.casefold()))
 
-        group_items = {}   # group_name -> QTreeWidgetItem header
+        bold = QFont(); bold.setBold(True)
+        grp_bold = QFont(); grp_bold.setBold(True)
+
+        group_items = {}   # group_name -> header QTreeWidgetItem
 
         for name in themes:
-            group_name = groups_map.get(name)   # None = ungrouped
+            group_name = groups_map.get(name)
 
             # ── ensure group header exists ────────────────────────────────────
             if group_name is not None:
                 if group_name not in group_items:
                     grp = QTreeWidgetItem(self._list, [f"  📁  {group_name}"])
-                    grp.setFont(0, group_bold)
+                    grp.setFont(0, grp_bold)
                     grp.setForeground(0, QColor("#1a5276"))
                     grp.setExpanded(True)
                     grp.setFlags(grp.flags() & ~Qt.ItemIsSelectable)
+                    grp.setData(0, GROUP_NAME_ROLE, group_name)  # for _rebuild_from_tree
                     group_items[group_name] = grp
                 parent = group_items[group_name]
             else:
                 parent = self._list.invisibleRootItem()
 
-            # ── leaf item (always shows the real theme name) ──────────────────
+            # ── leaf item ─────────────────────────────────────────────────────
             item = QTreeWidgetItem(parent, [f"  {name}"])
             item.setData(0, Qt.UserRole, name)
 
@@ -311,41 +403,28 @@ class ThemePresenterDock(QDockWidget):
     def _filter(self, text):
         text = text.strip().casefold()
         root = self._list.invisibleRootItem()
-
         for i in range(root.childCount()):
             top       = root.child(i)
             full_name = top.data(0, Qt.UserRole)
-
             if full_name is not None:
-                # Root-level leaf (ungrouped)
                 top.setHidden(bool(text) and text not in full_name.casefold())
             else:
-                # Group header — hide if ALL children hidden
-                any_visible = False
+                any_vis = False
                 for j in range(top.childCount()):
                     leaf      = top.child(j)
                     leaf_name = (leaf.data(0, Qt.UserRole) or "").casefold()
                     hidden    = bool(text) and text not in leaf_name
                     leaf.setHidden(hidden)
                     if not hidden:
-                        any_visible = True
-                top.setHidden(not any_visible)
-
-    def _update_ungroup_btn(self):
-        """Enable Ungroup only when a grouped theme is selected."""
-        name = self._selected_theme()
-        if name:
-            grps = self._load_groups()
-            self._btn_ungroup.setEnabled(name in grps)
-        else:
-            self._btn_ungroup.setEnabled(False)
+                        any_vis = True
+                top.setHidden(not any_vis)
 
     # ── Apply (click) ─────────────────────────────────────────────────────────
 
     def _on_item_clicked(self, item, column):
         name = item.data(0, Qt.UserRole)
         if not name:
-            return   # group header — ignore
+            return
         self._tc().applyTheme(name, self._root(), self._model())
         self.iface.mapCanvas().refresh()
         self._current_theme = name
@@ -355,12 +434,8 @@ class ThemePresenterDock(QDockWidget):
     # ── Add ───────────────────────────────────────────────────────────────────
 
     def _on_add(self):
-        tc   = self._tc()
-        root = self._root()
-
-        name, ok = QInputDialog.getText(
-            self, "Add Theme", "New theme name:"
-        )
+        tc = self._tc()
+        name, ok = QInputDialog.getText(self, "Add Theme", "New theme name:")
         name = name.strip()
         if not ok or not name:
             return
@@ -368,8 +443,7 @@ class ThemePresenterDock(QDockWidget):
             QMessageBox.warning(self, "Already Exists",
                                 f"A theme named '{name}' already exists.")
             return
-
-        state = tc.createThemeFromCurrentState(root, self._model())
+        state = tc.createThemeFromCurrentState(self._root(), self._model())
         tc.insert(name, state)
         self._status.setText(f"➕  Created: <b>{name}</b>  (from current canvas)")
         self._populate()
@@ -392,11 +466,16 @@ class ThemePresenterDock(QDockWidget):
         tc.insert(new, tc.mapThemeState(old))
         tc.removeMapTheme(old)
 
-        # Keep group assignment under the new name
+        # Transfer group assignment and order position
         groups_map = self._load_groups()
         if old in groups_map:
             groups_map[new] = groups_map.pop(old)
             self._save_groups(groups_map)
+
+        order = self._load_order()
+        if old in order:
+            order[order.index(old)] = new
+            self._save_order(order)
 
         if self._current_theme == old:
             self._current_theme = new
@@ -437,11 +516,15 @@ class ThemePresenterDock(QDockWidget):
             return
         self._tc().removeMapTheme(name)
 
-        # Remove from group map
         groups_map = self._load_groups()
         if name in groups_map:
             del groups_map[name]
             self._save_groups(groups_map)
+
+        order = self._load_order()
+        if name in order:
+            order.remove(name)
+            self._save_order(order)
 
         if self._current_theme == name:
             self._current_theme = None
@@ -457,7 +540,6 @@ class ThemePresenterDock(QDockWidget):
             QMessageBox.information(self, "No Themes",
                                     "No themes in the project to group.")
             return
-
         groups_map = self._load_groups()
         dlg = CreateGroupDialog(themes, groups_map, parent=self)
         if dlg.exec_() != QDialog.Accepted:
@@ -477,7 +559,6 @@ class ThemePresenterDock(QDockWidget):
         for theme in selected:
             groups_map[theme] = group_name
         self._save_groups(groups_map)
-
         self._status.setText(
             f"📁  Assigned {len(selected)} theme(s) to group <b>{group_name}</b>"
         )
@@ -496,5 +577,7 @@ class ThemePresenterDock(QDockWidget):
             return
         old_group = groups_map.pop(name)
         self._save_groups(groups_map)
-        self._status.setText(f"↩  Removed <b>{name}</b> from group <b>{old_group}</b>")
+        self._status.setText(
+            f"↩  Removed <b>{name}</b> from group <b>{old_group}</b>"
+        )
         self._populate()
