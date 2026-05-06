@@ -2,32 +2,81 @@
 """
 Theme Presenter — dockable panel for applying map themes with one click.
 
-Implemented as a QDockWidget so it can be docked, floated, and tabbed
-alongside other panels (Profile Tool, TUFLOW Viewer, etc.).
-
 Grouping: themes whose names contain '/' are nested under a collapsible
-group header.  E.g. "Phase1/Overview" appears as:
-    ▶ Phase1
-        Overview
+group header.  E.g. "FDF/FDF_100AEP_d" appears as:
+    ▶ FDF
+        FDF_100AEP_d
 
 Operations available:
-  • Click theme  — apply instantly to canvas
-  • Add          — create new theme from current canvas state
-  • Rename       — rename the selected theme
-  • Replace      — overwrite selected theme with current canvas state
-  • Delete       — delete the selected theme
+  • Click theme    — apply instantly to canvas
+  • Add            — create new theme from current canvas state
+  • Rename         — rename the selected theme (use Group/Name to move group)
+  • Replace        — overwrite selected theme with current canvas state
+  • Delete         — delete the selected theme
+  • Create Group   — pick themes from a list and move them into a new group
 """
 
 from qgis.PyQt.QtWidgets import (
-    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QDockWidget, QWidget, QVBoxLayout, QGridLayout,
     QLabel, QTreeWidget, QTreeWidgetItem,
+    QListWidget, QListWidgetItem,
     QLineEdit, QPushButton, QAbstractItemView,
-    QInputDialog, QMessageBox
+    QInputDialog, QMessageBox,
+    QDialog, QDialogButtonBox
 )
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import QgsProject
 
+
+# ── Create Group dialog ───────────────────────────────────────────────────────
+
+class CreateGroupDialog(QDialog):
+    """Pick a group name + select which themes to move into it."""
+
+    def __init__(self, themes, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Create / Move into Group")
+        self.setMinimumWidth(360)
+        self.setMinimumHeight(420)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+
+        layout.addWidget(QLabel("<b>Group name:</b>"))
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("e.g.  FDF")
+        layout.addWidget(self._name_edit)
+
+        layout.addWidget(QLabel("<b>Themes to move into this group:</b>"))
+
+        hint = QLabel("Hold Ctrl to select multiple.  Already-grouped themes will be "
+                      "moved out of their current group.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#666; font-size:10px;")
+        layout.addWidget(hint)
+
+        self._list = QListWidget()
+        self._list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        for theme in sorted(themes, key=str.casefold):
+            item = QListWidgetItem(theme)
+            item.setData(Qt.UserRole, theme)
+            self._list.addItem(item)
+        layout.addWidget(self._list)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def group_name(self):
+        return self._name_edit.text().strip()
+
+    def selected_themes(self):
+        return [item.data(Qt.UserRole) for item in self._list.selectedItems()]
+
+
+# ── Theme Presenter dock ──────────────────────────────────────────────────────
 
 class ThemePresenterDock(QDockWidget):
 
@@ -80,7 +129,7 @@ class ThemePresenterDock(QDockWidget):
         self._list.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._list)
 
-        # ── Action buttons (2×2 grid) ─────────────────────────────────────────
+        # ── 2×2 action buttons ────────────────────────────────────────────────
         btn_grid = QGridLayout()
         btn_grid.setSpacing(4)
 
@@ -91,10 +140,10 @@ class ThemePresenterDock(QDockWidget):
 
         self._btn_add.setToolTip("Create a new theme from the current canvas state\n"
                                  "Tip: name it 'Group/Theme' to place it in a group")
-        self._btn_rename.setToolTip("Rename the selected theme")
+        self._btn_rename.setToolTip("Rename the selected theme\n"
+                                    "Tip: use 'Group/Theme' to move it into a group")
         self._btn_replace.setToolTip("Overwrite selected theme with current canvas state")
         self._btn_delete.setToolTip("Delete the selected theme")
-
         self._btn_delete.setStyleSheet("color:#c0392b;")
 
         self._btn_add.clicked.connect(self._on_add)
@@ -107,6 +156,15 @@ class ThemePresenterDock(QDockWidget):
         btn_grid.addWidget(self._btn_replace, 1, 0)
         btn_grid.addWidget(self._btn_delete,  1, 1)
         layout.addLayout(btn_grid)
+
+        # ── Create Group button (full width) ──────────────────────────────────
+        self._btn_group = QPushButton("📁  Create Group")
+        self._btn_group.setToolTip(
+            "Select themes to move into a named group.\n"
+            "Themes will be renamed to  GroupName/ThemeName."
+        )
+        self._btn_group.clicked.connect(self._on_create_group)
+        layout.addWidget(self._btn_group)
 
         # Active theme banner
         self._status = QLabel("No theme applied yet.")
@@ -169,19 +227,18 @@ class ThemePresenterDock(QDockWidget):
 
         group_bold = QFont()
         group_bold.setBold(True)
-        group_bold.setPointSize(group_bold.pointSize())   # keep default size
 
         groups = {}   # group_name -> QTreeWidgetItem
 
         for name in themes:
             # ── parse optional group prefix ───────────────────────────────────
             if '/' in name:
-                slash       = name.index('/')
-                group_name  = name[:slash].strip()
-                leaf_label  = name[slash + 1:].strip()
+                slash      = name.index('/')
+                group_name = name[:slash].strip()
+                leaf_label = name[slash + 1:].strip()
             else:
-                group_name  = None
-                leaf_label  = name
+                group_name = None
+                leaf_label = name
 
             # ── ensure group header exists ────────────────────────────────────
             if group_name is not None:
@@ -215,7 +272,7 @@ class ThemePresenterDock(QDockWidget):
         root = self._list.invisibleRootItem()
 
         for i in range(root.childCount()):
-            top = root.child(i)
+            top       = root.child(i)
             full_name = top.data(0, Qt.UserRole)
 
             if full_name is not None:
@@ -279,7 +336,8 @@ class ThemePresenterDock(QDockWidget):
         tc = self._tc()
         new, ok = QInputDialog.getText(self, "Rename Theme",
                                        "New name:\n"
-                                       "• Use  Group/ThemeName  to move into a group",
+                                       "• Use  Group/ThemeName  to move into a group\n"
+                                       "• Remove the prefix to ungroup",
                                        text=old)
         new = new.strip()
         if not ok or not new or new == old:
@@ -331,4 +389,61 @@ class ThemePresenterDock(QDockWidget):
         if self._current_theme == name:
             self._current_theme = None
             self._status.setText("No theme applied yet.")
+        self._populate()
+
+    # ── Create Group ──────────────────────────────────────────────────────────
+
+    def _on_create_group(self):
+        tc     = self._tc()
+        themes = tc.mapThemes()
+        if not themes:
+            QMessageBox.information(self, "No Themes",
+                                    "No themes in the project to group.")
+            return
+
+        dlg = CreateGroupDialog(themes, parent=self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        group_name = dlg.group_name()
+        selected   = dlg.selected_themes()
+
+        if not group_name:
+            QMessageBox.warning(self, "No Group Name",
+                                "Please enter a group name.")
+            return
+        if '/' in group_name:
+            QMessageBox.warning(self, "Invalid Name",
+                                "Group name cannot contain '/'.")
+            return
+        if not selected:
+            QMessageBox.warning(self, "Nothing Selected",
+                                "Please select at least one theme.")
+            return
+
+        moved    = 0
+        skipped  = []
+
+        for old_name in selected:
+            # Keep the leaf part only (strip any existing group prefix)
+            leaf     = old_name[old_name.index('/') + 1:] if '/' in old_name else old_name
+            new_name = f"{group_name}/{leaf}"
+
+            if new_name == old_name:
+                continue   # already in this group
+
+            if new_name in tc.mapThemes():
+                skipped.append(old_name)
+                continue
+
+            tc.insert(new_name, tc.mapThemeState(old_name))
+            tc.removeMapTheme(old_name)
+            if self._current_theme == old_name:
+                self._current_theme = new_name
+            moved += 1
+
+        msg = f"📁  Moved {moved} theme(s) into group <b>{group_name}</b>."
+        if skipped:
+            msg += f"<br>Skipped {len(skipped)} conflict(s): " + ", ".join(skipped)
+        self._status.setText(msg)
         self._populate()
