@@ -15,9 +15,10 @@ Toolbar buttons:
 """
 
 import os
+import math
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush
+from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject
 
 from .processing_provider import MapThemeToolboxProvider
@@ -61,6 +62,43 @@ class MapThemeToolbox:
         self.iface.addPluginToMenu(MENU, act)
         self.actions.append(act)
         return act
+
+    def _make_autosave_icon(self, enabled):
+        """Paint a clock icon: green when auto-save is on, grey when off."""
+        SIZE = 20
+        pix  = QPixmap(SIZE, SIZE)
+        pix.fill(Qt.transparent)
+
+        p   = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        col = QColor("#27ae60") if enabled else QColor("#95a5a6")
+        cx = cy = SIZE / 2.0
+        r  = SIZE / 2.0 - 1.5
+
+        # Outer ring
+        p.setPen(QPen(col, 1.8))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), r, r)
+
+        # Clock hands (10:10 position — symmetrical, looks like a smile)
+        pen = QPen(col, 1.8, Qt.SolidLine, Qt.RoundCap)
+        p.setPen(pen)
+        # Hour hand → 10 o'clock
+        ah = math.radians(-60)   # 300° from top = 10 o'clock
+        p.drawLine(QPointF(cx, cy),
+                   QPointF(cx + r * 0.50 * math.sin(ah),
+                            cy - r * 0.50 * math.cos(ah)))
+        # Minute hand → 12 o'clock (straight up)
+        p.drawLine(QPointF(cx, cy), QPointF(cx, cy - r * 0.75))
+
+        # Centre dot
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(col))
+        p.drawEllipse(QPointF(cx, cy), 1.5, 1.5)
+
+        p.end()
+        return QIcon(pix)
 
     def initGui(self):
         self.provider = MapThemeToolboxProvider()
@@ -110,13 +148,11 @@ class MapThemeToolbox:
         self.toolbar.addSeparator()
         self._autosave = AutoSaveManager(self.iface)
         self._autosave_action = QAction(
-            QgsApplication.getThemeIcon("mActionFileSave.svg"),
+            self._make_autosave_icon(self._autosave.enabled),
             "Auto-Save  (off)",
             self.iface.mainWindow()
         )
-        self._autosave_action.setToolTip(
-            "Auto-Save is OFF — click to configure"
-        )
+        self._autosave_action.setToolTip("Auto-Save is OFF — click to configure")
         self._autosave_action.triggered.connect(self.run_autosave)
         self.toolbar.addAction(self._autosave_action)
         self.iface.addPluginToMenu(MENU, self._autosave_action)
@@ -124,6 +160,9 @@ class MapThemeToolbox:
 
         self._autosave.register_callback(self._on_autosave_changed)
         self._on_autosave_changed()   # reflect saved state on startup
+
+        # ── Show Auto-Save dialog on every QGIS startup ───────────────────────
+        QTimer.singleShot(800, self.run_autosave)
 
     def unload(self):
         CONNECTION.unregister_callback(self._on_connection_changed)
@@ -378,7 +417,9 @@ class MapThemeToolbox:
     def _on_autosave_changed(self):
         if self._autosave_action is None or self._autosave is None:
             return
-        if self._autosave.enabled:
+        enabled = self._autosave.enabled
+        self._autosave_action.setIcon(self._make_autosave_icon(enabled))
+        if enabled:
             ivl = self._autosave.interval
             mins, secs = divmod(ivl, 60)
             label = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
