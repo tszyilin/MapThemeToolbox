@@ -11,6 +11,7 @@ Toolbar buttons:
   7. Theme Presenter           (icon_present.png  — green screen/play)
   8. Sync Setup                (icon_sync.png     — opens full dialog)
   9. Quick Sync                (icon_sync_on/off  — green=ready, grey=not connected)
+ 10. Auto-Save                 (QGIS save icon    — green=on, grey=off)
 """
 
 import os
@@ -21,6 +22,7 @@ from qgis.core import QgsApplication, QgsProject
 
 from .processing_provider import MapThemeToolboxProvider
 from .sync_state import CONNECTION
+from .autosave_manager import AutoSaveManager
 
 MENU = "&Map Theme Toolbox"
 
@@ -34,6 +36,8 @@ class MapThemeToolbox:
         self.toolbar.setObjectName("MapThemeToolboxToolbar")
         self._quick_sync_action = None
         self._present_dock      = None   # ThemePresenterDock instance
+        self._autosave          = None   # AutoSaveManager instance
+        self._autosave_action   = None
 
     def _icon(self, name):
         path = os.path.join(os.path.dirname(__file__), name)
@@ -102,8 +106,29 @@ class MapThemeToolbox:
         # Sync initial state in case dialog was opened before
         self._on_connection_changed()
 
+        # ── Auto-Save button ─────────────────────────────────────────────────
+        self.toolbar.addSeparator()
+        self._autosave = AutoSaveManager(self.iface)
+        self._autosave_action = QAction(
+            QgsApplication.getThemeIcon("mActionFileSave.svg"),
+            "Auto-Save  (off)",
+            self.iface.mainWindow()
+        )
+        self._autosave_action.setToolTip(
+            "Auto-Save is OFF — click to configure"
+        )
+        self._autosave_action.triggered.connect(self.run_autosave)
+        self.toolbar.addAction(self._autosave_action)
+        self.iface.addPluginToMenu(MENU, self._autosave_action)
+        self.actions.append(self._autosave_action)
+
+        self._autosave.register_callback(self._on_autosave_changed)
+        self._on_autosave_changed()   # reflect saved state on startup
+
     def unload(self):
         CONNECTION.unregister_callback(self._on_connection_changed)
+        if self._autosave:
+            self._autosave.stop()
         for act in self.actions:
             self.iface.removePluginMenu(MENU, act)
             self.iface.removeToolBarIcon(act)
@@ -346,6 +371,32 @@ class MapThemeToolbox:
     def run_sync(self):
         from .dialog_sync_table import SyncTableDialog
         dlg = SyncTableDialog(self.iface, parent=self.iface.mainWindow())
+        dlg.exec_()
+
+    # ── Auto-Save state callback ──────────────────────────────────────────────
+
+    def _on_autosave_changed(self):
+        if self._autosave_action is None or self._autosave is None:
+            return
+        if self._autosave.enabled:
+            ivl = self._autosave.interval
+            mins, secs = divmod(ivl, 60)
+            label = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
+            self._autosave_action.setText(f"Auto-Save  ✔ {label}")
+            self._autosave_action.setToolTip(
+                f"Auto-Save: ON — every {label}\nClick to configure."
+            )
+        else:
+            self._autosave_action.setText("Auto-Save  (off)")
+            self._autosave_action.setToolTip(
+                "Auto-Save is OFF — click to configure."
+            )
+
+    # ── 10. Auto-Save ─────────────────────────────────────────────────────────
+
+    def run_autosave(self):
+        from .dialog_autosave import AutoSaveDialog
+        dlg = AutoSaveDialog(self._autosave, parent=self.iface.mainWindow())
         dlg.exec_()
 
     # ── 7. Quick Sync (one-click, toolbar only) ───────────────────────────────
