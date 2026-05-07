@@ -14,15 +14,17 @@ from qgis.core import QgsProject, QgsSettings
 
 class AutoSaveManager:
 
-    _KEY_ENABLED  = "MapThemeToolbox/autosave/enabled"
-    _KEY_INTERVAL = "MapThemeToolbox/autosave/interval"
+    _KEY_ENABLED       = "MapThemeToolbox/autosave/enabled"
+    _KEY_INTERVAL      = "MapThemeToolbox/autosave/interval"
+    _KEY_SHOW_ON_START = "MapThemeToolbox/autosave/show_on_start"
 
     def __init__(self, iface):
-        self.iface     = iface
-        self.last_save = None   # "HH:MM:SS" string set after each save
-        self._enabled  = False
-        self._interval = 300    # seconds
-        self._callbacks = []
+        self.iface          = iface
+        self.last_save      = None   # "HH:MM:SS" string set after each save
+        self._enabled       = False
+        self._interval      = 300    # seconds
+        self._show_on_start = True   # open dialog when QGIS starts
+        self._callbacks     = []
 
         self._timer = QTimer()
         self._timer.setSingleShot(False)
@@ -42,16 +44,21 @@ class AutoSaveManager:
     def interval(self):
         return self._interval
 
+    @property
+    def show_on_start(self):
+        return self._show_on_start
+
     def timer_remaining(self):
         """Seconds until next auto-save, or None if not running."""
         if not self._timer.isActive():
             return None
         return max(0, self._timer.remainingTime() // 1000)
 
-    def apply(self, enabled, interval):
+    def apply(self, enabled, interval, show_on_start=True):
         """Apply new settings and (re)start or stop the timer."""
-        self._enabled  = bool(enabled)
-        self._interval = max(10, int(interval))
+        self._enabled       = bool(enabled)
+        self._interval      = max(10, int(interval))
+        self._show_on_start = bool(show_on_start)
         self._save_settings()
         if self._enabled:
             self._timer.start(self._interval * 1000)
@@ -101,13 +108,15 @@ class AutoSaveManager:
 
     def _load_settings(self):
         s = QgsSettings()
-        self._enabled  = s.value(self._KEY_ENABLED,  False, type=bool)
-        self._interval = s.value(self._KEY_INTERVAL, 300,   type=int)
+        self._enabled       = s.value(self._KEY_ENABLED,       False, type=bool)
+        self._interval      = s.value(self._KEY_INTERVAL,      300,   type=int)
+        self._show_on_start = s.value(self._KEY_SHOW_ON_START, True,  type=bool)
 
     def _save_settings(self):
         s = QgsSettings()
-        s.setValue(self._KEY_ENABLED,  self._enabled)
-        s.setValue(self._KEY_INTERVAL, self._interval)
+        s.setValue(self._KEY_ENABLED,       self._enabled)
+        s.setValue(self._KEY_INTERVAL,      self._interval)
+        s.setValue(self._KEY_SHOW_ON_START, self._show_on_start)
 
     def _notify(self):
         for cb in list(self._callbacks):

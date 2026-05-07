@@ -61,6 +61,14 @@ class AutoSaveDialog(QDialog):
         preset_row.addStretch()
         layout.addLayout(preset_row)
 
+        # ── Show on startup checkbox ──────────────────────────────────────────
+        self._chk_startup = QCheckBox("Show this dialog when QGIS starts")
+        self._chk_startup.setChecked(manager.show_on_start)
+        self._chk_startup.setToolTip(
+            "When ticked, this dialog opens automatically every time QGIS loads."
+        )
+        layout.addWidget(self._chk_startup)
+
         # ── Status panel ──────────────────────────────────────────────────────
         self._lbl_status = QLabel()
         self._lbl_status.setWordWrap(True)
@@ -131,7 +139,8 @@ class AutoSaveDialog(QDialog):
     def _on_apply(self):
         self._mgr.apply(
             enabled=self._chk.isChecked(),
-            interval=self._spin.value()
+            interval=self._spin.value(),
+            show_on_start=self._chk_startup.isChecked()
         )
         self._update_status()
 

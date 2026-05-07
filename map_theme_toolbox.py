@@ -161,8 +161,9 @@ class MapThemeToolbox:
         self._autosave.register_callback(self._on_autosave_changed)
         self._on_autosave_changed()   # reflect saved state on startup
 
-        # ── Show Auto-Save dialog on every QGIS startup ───────────────────────
-        QTimer.singleShot(800, self.run_autosave)
+        # ── Optionally show Auto-Save dialog on QGIS startup ─────────────────
+        if self._autosave.show_on_start:
+            QTimer.singleShot(800, self.run_autosave)
 
     def unload(self):
         CONNECTION.unregister_callback(self._on_connection_changed)
