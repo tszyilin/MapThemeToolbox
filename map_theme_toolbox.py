@@ -22,7 +22,7 @@ from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject
 
 from .processing_provider import MapThemeToolboxProvider
-from .sync_state import CONNECTION
+from .sync_state import REGISTRY
 from .autosave_manager import AutoSaveManager
 
 MENU = "&Map Theme Toolbox"
@@ -139,9 +139,9 @@ class MapThemeToolbox:
         self.actions.append(self._quick_sync_action)
 
         # Register for state-change callbacks
-        CONNECTION.register_callback(self._on_connection_changed)
+        REGISTRY.register_callback(self._on_connection_changed)
 
-        # Sync initial state in case dialog was opened before
+        # Sync initial state
         self._on_connection_changed()
 
         # ── Auto-Save button ─────────────────────────────────────────────────
@@ -166,7 +166,7 @@ class MapThemeToolbox:
             QTimer.singleShot(800, self.run_autosave)
 
     def unload(self):
-        CONNECTION.unregister_callback(self._on_connection_changed)
+        REGISTRY.unregister_callback(self._on_connection_changed)
         if self._autosave:
             self._autosave.stop()
         for act in self.actions:
@@ -183,23 +183,31 @@ class MapThemeToolbox:
     # ── Connection state callback ─────────────────────────────────────────────
 
     def _on_connection_changed(self):
-        """Called whenever SyncConnection.connect() or .disconnect() is called."""
+        """Called whenever any SyncConnection changes."""
         if self._quick_sync_action is None:
             return
-        if CONNECTION.connected:
+        connected = REGISTRY.connected_list()
+        if connected:
             self._quick_sync_action.setIcon(self._icon("icon_sync_on.png"))
-            self._quick_sync_action.setText(f"Quick Sync  ✔ {CONNECTION.layer_name}")
-            self._quick_sync_action.setToolTip(
-                f"Quick Sync — click to push data now\n"
-                f"File:  {os.path.basename(CONNECTION.file_path or '')}\n"
-                f"Layer: {CONNECTION.layer_name}"
-            )
+            if len(connected) == 1:
+                label = connected[0].name
+                tip   = (f"Quick Sync — click to push data now\n"
+                         f"Connection: {connected[0].name}\n"
+                         f"File:  {os.path.basename(connected[0].file_path or '')}\n"
+                         f"Layer: {connected[0].layer_name}")
+            else:
+                label = f"{len(connected)} connected"
+                tip   = "Quick Sync — will sync all connected connections:\n" + \
+                        "\n".join(f"  • {c.name}" for c in connected)
+            self._quick_sync_action.setText(f"Quick Sync  ✔ {label}")
+            self._quick_sync_action.setToolTip(tip)
             self._quick_sync_action.setEnabled(True)
         else:
             self._quick_sync_action.setIcon(self._icon("icon_sync_off.png"))
             self._quick_sync_action.setText("Quick Sync  (not connected)")
             self._quick_sync_action.setToolTip(
-                "Quick Sync: no connection set up yet.\nClick 'Sync Setup' first to connect a file."
+                "Quick Sync: no connections set up yet.\n"
+                "Click 'Sync Setup' first to connect a file."
             )
             self._quick_sync_action.setEnabled(False)
 
@@ -441,19 +449,26 @@ class MapThemeToolbox:
         dlg = AutoSaveDialog(self._autosave, parent=self.iface.mainWindow())
         dlg.exec_()
 
-    # ── 7. Quick Sync (one-click, toolbar only) ───────────────────────────────
+    # ── Quick Sync (one-click, toolbar only) ─────────────────────────────────
 
     def run_quick_sync(self):
-        if not CONNECTION.connected:
+        connected = REGISTRY.connected_list()
+        if not connected:
             QMessageBox.information(self.iface.mainWindow(), "Not Connected",
-                "No sync connection set up yet.\nClick 'Sync Setup' to connect a file first.")
+                "No connections set up yet.\nClick 'Sync Setup' to connect a file first.")
             return
 
-        from .dialog_sync_table import SyncTableDialog
-        # Re-use the dialog's sync logic via a minimal helper
-        dlg = SyncTableDialog(self.iface, parent=self.iface.mainWindow())
-        # Dialog restores state from CONNECTION automatically — just trigger sync
-        dlg._on_sync()
-        # Show result in status bar (dialog stays hidden)
-        msg = dlg._last_sync_label.text()
-        self.iface.messageBar().pushSuccess("Quick Sync", msg)
+        from .dialog_sync_table import perform_sync
+        results = []
+        all_ok  = True
+        for conn in connected:
+            success, msg = perform_sync(conn, self.iface)
+            results.append(f"{conn.name}: {msg}")
+            if not success:
+                all_ok = False
+
+        summary = "  |  ".join(results)
+        if all_ok:
+            self.iface.messageBar().pushSuccess("Quick Sync", summary)
+        else:
+            self.iface.messageBar().pushWarning("Quick Sync (some errors)", summary)
