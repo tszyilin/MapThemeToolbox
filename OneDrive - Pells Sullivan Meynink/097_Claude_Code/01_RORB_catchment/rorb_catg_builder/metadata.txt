@@ -1,0 +1,13 @@
+[general]
+name=RORB Catchment Builder
+qgisMinimumVersion=3.16
+description=Build RORB GE 6.45 compatible .catg files from reach, centroid, junction and sub-catchment polygon layers
+version=1.0
+author=PSM
+email=safin.lin@psm.com.au
+about=Select your four QGIS layers (reaches, centroids, junctions, sub-catchment polygons), map the attribute fields, set an output path and click Build to generate a RORB .catg file ready for import into RORB GE.
+tags=rorb,hydrology,catchment,flood
+category=Plugins
+icon=icon.png
+experimental=False
+deprecated=False
