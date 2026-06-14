@@ -737,8 +737,11 @@ class RorbModelDialog(QDialog):
             (crit_lbl, crit_min), (mean_peak, crit_rows) = max(
                 dur_summary.items(), key=lambda x: x[1][0])
 
-            # Representative TP = closest to mean
-            rep_row = min(crit_rows, key=lambda r: abs(r['peak'] - mean_peak))
+            # Representative TP = at or above mean, closest from above (conservative)
+            above   = [r for r in crit_rows if r['peak'] >= mean_peak]
+            pool    = above if above else crit_rows
+            rep_row = min(pool, key=lambda r: r['peak'] - mean_peak
+                          if above else abs(r['peak'] - mean_peak))
 
             # All mean peaks for this AEP (for logging)
             dur_means = {lbl: round(v, 3) for (lbl, _), (v, _) in dur_summary.items()}
