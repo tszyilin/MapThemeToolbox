@@ -564,10 +564,18 @@ class RorbResultsDialog(QDialog):
 
     def _tab_export(self):
         w = QWidget(); lay = QVBoxLayout(w)
+
+        # ── Settings ──────────────────────────────────────────────────────
         box = QGroupBox("Export Settings"); form = QFormLayout(box)
+
+        self._exp_scen_combo = QComboBox(); self._exp_scen_combo.setMinimumWidth(200)
+        self._exp_scen_combo.currentIndexChanged.connect(self._on_exp_scen_changed)
+        form.addRow("Scenario:", self._exp_scen_combo)
+
         self._exp_node_combo = QComboBox(); self._exp_node_combo.setMinimumWidth(240)
         self._exp_node_combo.currentIndexChanged.connect(self._refresh_export_info)
         form.addRow("Node (print point):", self._exp_node_combo)
+
         folder_row = QHBoxLayout()
         self._exp_folder_edit = QLineEdit(); self._exp_folder_edit.setReadOnly(True)
         self._exp_folder_edit.setPlaceholderText("Browse to output folder …")
@@ -576,26 +584,51 @@ class RorbResultsDialog(QDialog):
         folder_row.addWidget(self._exp_folder_edit); folder_row.addWidget(folder_btn)
         form.addRow("Save folder:", folder_row)
         lay.addWidget(box)
+
+        # ── AEP selection ──────────────────────────────────────────────────
+        aep_box = QGroupBox("AEP Selection")
+        aep_lay = QVBoxLayout(aep_box)
+        aep_btn_row = QHBoxLayout()
+        all_btn  = QPushButton("All");  all_btn.setFixedWidth(40)
+        none_btn = QPushButton("None"); none_btn.setFixedWidth(45)
+        all_btn.clicked.connect(lambda: self._toggle_exp_aeps(True))
+        none_btn.clicked.connect(lambda: self._toggle_exp_aeps(False))
+        aep_btn_row.addWidget(all_btn); aep_btn_row.addWidget(none_btn)
+        aep_btn_row.addStretch(); aep_lay.addLayout(aep_btn_row)
+        self._exp_aep_scroll = QScrollArea(); self._exp_aep_scroll.setWidgetResizable(True)
+        self._exp_aep_scroll.setMaximumHeight(120)
+        self._exp_aep_inner = QWidget(); self._exp_aep_grid = QHBoxLayout(self._exp_aep_inner)
+        self._exp_aep_grid.setSpacing(8); self._exp_aep_grid.addStretch()
+        self._exp_aep_scroll.setWidget(self._exp_aep_inner)
+        aep_lay.addWidget(self._exp_aep_scroll)
+        lay.addWidget(aep_box)
+        self._exp_aep_chks = {}   # aep_label -> QCheckBox
+
+        # ── Info + buttons ────────────────────────────────────────────────
         self._exp_info = QLabel("Select a scenario and node.")
         self._exp_info.setWordWrap(True); self._exp_info.setFont(QFont("Courier New", 8))
-        self._exp_info.setStyleSheet("background:#f8f9fa;padding:10px;border:1px solid #dee2e6;")
+        self._exp_info.setStyleSheet("background:#f8f9fa;padding:8px;border:1px solid #dee2e6;")
         lay.addWidget(self._exp_info)
-        hint = QLabel("Exports critical duration rep-TP hydrograph and hyetograph "
-                      "for every AEP in the active scenario.")
-        hint.setWordWrap(True); hint.setStyleSheet("color:gray;font-size:8pt;")
-        lay.addWidget(hint)
+
         brow = QHBoxLayout()
-        hydro_btn = QPushButton("Export Hydrographs  (one CSV per AEP)")
+        hydro_btn = QPushButton("Export Hydrographs")
         hydro_btn.setMinimumHeight(36); hydro_btn.clicked.connect(self._export_hydros)
-        hyeto_btn = QPushButton("Export Hyetographs  (one CSV per AEP)")
+        hyeto_btn = QPushButton("Export Hyetographs")
         hyeto_btn.setMinimumHeight(36); hyeto_btn.clicked.connect(self._export_hyetos)
         brow.addWidget(hydro_btn); brow.addWidget(hyeto_btn); brow.addStretch()
         lay.addLayout(brow); lay.addStretch()
         return w
 
+    def _toggle_exp_aeps(self, state):
+        for cb in self._exp_aep_chks.values(): cb.setChecked(state)
+
     def _browse_export_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select output folder", "")
         if folder: self._exp_folder_edit.setText(folder)
+
+    def _exp_scenario(self):
+        """Return the scenario name selected in the export tab."""
+        return self._exp_scen_combo.currentText() or self._active or None
 
     # ── Scenario management ───────────────────────────────────────────────────
 
@@ -654,9 +687,14 @@ class RorbResultsDialog(QDialog):
         self._scan_status.setText(f"Error scanning '{scenario_name}'")
         QMessageBox.critical(self, "Scan error", msg)
 
+    def _on_exp_scen_changed(self):
+        self._refresh_export_combos()
+        self._refresh_export_info()
+
     def _on_rep_method_changed(self):
         self._populate_critical_table()
         self._replot()
+        self._refresh_export_info()
 
     def _on_scenario_changed(self):
         self._active = self._scen_combo.currentText() or None
@@ -677,15 +715,46 @@ class RorbResultsDialog(QDialog):
         for a in aeps: self._aep_combo.addItem(a)
         self._aep_combo.blockSignals(False)
 
-        for combo in (self._crit_node_combo, self._exp_node_combo):
+        for combo in (self._crit_node_combo,):
             combo.blockSignals(True); combo.clear()
             for n in all_nodes: combo.addItem(n)
             combo.blockSignals(False)
+
+        # Export scenario combo
+        names = list(self._scenarios.keys())
+        cur_exp = self._exp_scen_combo.currentText()
+        self._exp_scen_combo.blockSignals(True); self._exp_scen_combo.clear()
+        for n in names: self._exp_scen_combo.addItem(n)
+        if cur_exp in names: self._exp_scen_combo.setCurrentText(cur_exp)
+        elif self._active and self._active in names:
+            self._exp_scen_combo.setCurrentText(self._active)
+        self._exp_scen_combo.blockSignals(False)
+
+        self._refresh_export_combos()
 
         if aeps:
             self._populate_critical_table()
             self._refresh_viewer()
             self._refresh_export_info()
+
+    def _refresh_export_combos(self):
+        """Refresh node combo and AEP checkboxes in the export tab."""
+        scen = self._exp_scenario()
+        nodes = self._all_nodes(scen)
+        self._exp_node_combo.blockSignals(True); self._exp_node_combo.clear()
+        for n in nodes: self._exp_node_combo.addItem(n)
+        self._exp_node_combo.blockSignals(False)
+
+        # AEP checkboxes
+        while self._exp_aep_grid.count():
+            item = self._exp_aep_grid.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        self._exp_aep_chks.clear()
+        for aep in self._all_aeps(scen):
+            cb = QCheckBox(aep); cb.setChecked(True)
+            self._exp_aep_chks[aep] = cb
+            self._exp_aep_grid.addWidget(cb)
+        self._exp_aep_grid.addStretch()
 
     def _refresh_compare_combos(self):
         names = list(self._scenarios.keys())
@@ -890,30 +959,38 @@ class RorbResultsDialog(QDialog):
     # ── Export ────────────────────────────────────────────────────────────────
 
     def _refresh_export_info(self):
+        scen = self._exp_scenario()
         node = self._exp_node_combo.currentText() or None
-        aeps = self._all_aeps()
+        aeps = self._all_aeps(scen)
         if not aeps: self._exp_info.setText("No data loaded."); return
-        lines = [f"Active scenario: {self._active or '—'}", ""]
+        lines = [f"Scenario: {scen or '—'}  |  "
+                 f"Rep TP method: {self._rep_method.currentText()}", ""]
         for aep in aeps:
-            crit = self._compute_critical(aep, node)
+            crit = self._compute_critical(aep, node, scen)
             if not crit: continue
+            tick = "✔" if self._exp_aep_chks.get(aep, None) and \
+                          self._exp_aep_chks[aep].isChecked() else " "
             lines.append(
-                f"  {aep:<14}  crit: {crit['crit_dur']:<12}  "
+                f"  [{tick}] {aep:<14}  crit: {crit['crit_dur']:<12}  "
                 f"rep TP{crit['rep_tp']}  "
                 f"mean pk: {crit['mean_peak']:.3f}  "
                 f"rep pk: {crit['rep_peak']:.3f} m³/s")
         self._exp_info.setText("\n".join(lines))
 
+    def _selected_export_aeps(self):
+        return [aep for aep, cb in self._exp_aep_chks.items() if cb.isChecked()]
+
     def _export_hydros(self):
         folder = self._exp_folder_edit.text().strip()
         if not folder:
             QMessageBox.warning(self, "Export", "Select an output folder first."); return
+        scen = self._exp_scenario()
         node = self._exp_node_combo.currentText() or None
-        aeps = self._all_aeps()
-        if not aeps: QMessageBox.warning(self, "Export", "No data loaded."); return
+        aeps = self._selected_export_aeps()
+        if not aeps: QMessageBox.warning(self, "Export", "Select at least one AEP."); return
         saved, skipped = [], []
         for aep in aeps:
-            crit = self._compute_critical(aep, node)
+            crit = self._compute_critical(aep, node, scen)
             if not crit: skipped.append(aep); continue
             e = crit['rep_entry']
             q = self._get_hydro(e, node)
@@ -937,12 +1014,13 @@ class RorbResultsDialog(QDialog):
         folder = self._exp_folder_edit.text().strip()
         if not folder:
             QMessageBox.warning(self, "Export", "Select an output folder first."); return
+        scen = self._exp_scenario()
         node = self._exp_node_combo.currentText() or None
-        aeps = self._all_aeps()
-        if not aeps: QMessageBox.warning(self, "Export", "No data loaded."); return
+        aeps = self._selected_export_aeps()
+        if not aeps: QMessageBox.warning(self, "Export", "Select at least one AEP."); return
         saved, skipped = [], []
         for aep in aeps:
-            crit = self._compute_critical(aep, node)
+            crit = self._compute_critical(aep, node, scen)
             if not crit: skipped.append(aep); continue
             e = crit['rep_entry']
             rain_t = e.get('rain_t', []); rain_mm = e.get('rain_mm', [])
