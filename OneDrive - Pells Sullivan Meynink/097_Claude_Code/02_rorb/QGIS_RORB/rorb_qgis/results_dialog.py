@@ -750,11 +750,8 @@ class RorbResultsDialog(QDialog):
         }
         (crit_lbl, crit_min), (mean_peak, crit_tps) = max(
             dur_means.items(), key=lambda x: x[1][0])
-        # Prefer TP at or above mean (conservative); fall back to closest below
-        above = [(tp, pk, e) for tp, pk, e in crit_tps if pk >= mean_peak]
-        pool  = above if above else crit_tps
-        rep_tp_num, rep_peak, rep_entry = min(pool, key=lambda x: x[1] - mean_peak
-                                              if above else abs(x[1] - mean_peak))
+        rep_tp_num, rep_peak, rep_entry = min(
+            crit_tps, key=lambda x: abs(x[1] - mean_peak))
         return {
             'crit_dur': crit_lbl, 'crit_min': crit_min,
             'rep_tp': rep_tp_num, 'rep_peak': rep_peak,
