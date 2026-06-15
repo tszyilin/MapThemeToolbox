@@ -604,6 +604,25 @@ class RorbResultsDialog(QDialog):
         lay.addWidget(aep_box)
         self._exp_aep_chks = {}   # aep_label -> QCheckBox
 
+        # ── TP selection ───────────────────────────────────────────────────
+        tp_box = QGroupBox("Temporal Patterns  (critical duration per AEP  —  ★ = rep TP)")
+        tp_lay = QVBoxLayout(tp_box)
+        tp_btn_row = QHBoxLayout()
+        tp_all  = QPushButton("All");  tp_all.setFixedWidth(40)
+        tp_none = QPushButton("None"); tp_none.setFixedWidth(45)
+        tp_all.clicked.connect(lambda: self._toggle_exp_tps(True))
+        tp_none.clicked.connect(lambda: self._toggle_exp_tps(False))
+        tp_btn_row.addWidget(tp_all); tp_btn_row.addWidget(tp_none); tp_btn_row.addStretch()
+        tp_lay.addLayout(tp_btn_row)
+        self._exp_tp_scroll = QScrollArea(); self._exp_tp_scroll.setWidgetResizable(True)
+        self._exp_tp_scroll.setMaximumHeight(80)
+        self._exp_tp_inner = QWidget(); self._exp_tp_grid = QHBoxLayout(self._exp_tp_inner)
+        self._exp_tp_grid.setSpacing(8); self._exp_tp_grid.addStretch()
+        self._exp_tp_scroll.setWidget(self._exp_tp_inner)
+        tp_lay.addWidget(self._exp_tp_scroll)
+        lay.addWidget(tp_box)
+        self._exp_tp_chks = {}    # tp_num -> QCheckBox
+
         # ── Info + buttons ────────────────────────────────────────────────
         self._exp_info = QLabel("Select a scenario and node.")
         self._exp_info.setWordWrap(True); self._exp_info.setFont(QFont("Courier New", 8))
@@ -621,6 +640,41 @@ class RorbResultsDialog(QDialog):
 
     def _toggle_exp_aeps(self, state):
         for cb in self._exp_aep_chks.values(): cb.setChecked(state)
+        self._refresh_export_tps()
+
+    def _toggle_exp_tps(self, state):
+        for cb in self._exp_tp_chks.values(): cb.setChecked(state)
+
+    def _refresh_export_tps(self):
+        """Rebuild TP checkboxes from the critical duration of selected AEPs."""
+        while self._exp_tp_grid.count():
+            item = self._exp_tp_grid.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+        self._exp_tp_chks.clear()
+
+        scen = self._exp_scenario()
+        node = self._exp_node_combo.currentText() or None
+
+        # Collect all TPs at the critical duration across selected AEPs
+        all_tp_nums = set()
+        rep_tp_nums = set()
+        for aep in self._selected_export_aeps():
+            crit = self._compute_critical(aep, node, scen)
+            if not crit: continue
+            rep_tp_nums.add(crit['rep_tp'])
+            for tp_num, _, _ in crit['crit_tps']:
+                all_tp_nums.add(tp_num)
+
+        for tp_num in sorted(all_tp_nums):
+            is_rep = tp_num in rep_tp_nums
+            label  = f"TP{tp_num}" + (" ★" if is_rep else "")
+            cb = QCheckBox(label)
+            cb.setChecked(is_rep)   # pre-tick rep TPs; extras start unticked
+            if is_rep:
+                cb.setStyleSheet("font-weight:bold;")
+            self._exp_tp_chks[tp_num] = cb
+            self._exp_tp_grid.addWidget(cb)
+        self._exp_tp_grid.addStretch()
 
     def _browse_export_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select output folder", "")
@@ -689,6 +743,7 @@ class RorbResultsDialog(QDialog):
 
     def _on_exp_scen_changed(self):
         self._refresh_export_combos()
+        self._refresh_export_tps()
         self._refresh_export_info()
 
     def _on_rep_method_changed(self):
@@ -755,6 +810,7 @@ class RorbResultsDialog(QDialog):
             self._exp_aep_chks[aep] = cb
             self._exp_aep_grid.addWidget(cb)
         self._exp_aep_grid.addStretch()
+        self._refresh_export_tps()
 
     def _refresh_compare_combos(self):
         names = list(self._scenarios.keys())
@@ -980,6 +1036,9 @@ class RorbResultsDialog(QDialog):
     def _selected_export_aeps(self):
         return [aep for aep, cb in self._exp_aep_chks.items() if cb.isChecked()]
 
+    def _selected_export_tps(self):
+        return [tp for tp, cb in self._exp_tp_chks.items() if cb.isChecked()]
+
     def _export_hydros(self):
         folder = self._exp_folder_edit.text().strip()
         if not folder:
@@ -987,25 +1046,30 @@ class RorbResultsDialog(QDialog):
         scen = self._exp_scenario()
         node = self._exp_node_combo.currentText() or None
         aeps = self._selected_export_aeps()
+        tps  = self._selected_export_tps()
         if not aeps: QMessageBox.warning(self, "Export", "Select at least one AEP."); return
+        if not tps:  QMessageBox.warning(self, "Export", "Select at least one TP."); return
         saved, skipped = [], []
         for aep in aeps:
             crit = self._compute_critical(aep, node, scen)
             if not crit: skipped.append(aep); continue
-            e = crit['rep_entry']
-            q = self._get_hydro(e, node)
-            t = e.get('time', [])[:len(q)] if q is not None else []
-            if q is None: skipped.append(aep); continue
-            raw  = os.path.splitext(e['fname'])[0]
-            m    = re.search(r'aep\d', raw, re.IGNORECASE)
-            stem = raw[m.start():] if m else raw
-            fname = os.path.join(folder, f"{stem}_hydro.csv")
-            with open(fname, 'w', newline='') as f:
-                w = csv_mod.writer(f)
-                w.writerow(["Time (hr)", "Flow (cms)"])
-                for tv, qv in zip(t, q):
-                    w.writerow([f"{tv:.4f}", f"{float(qv):.6f}"])
-            saved.append(os.path.basename(fname))
+            tp_map = {tp: e for tp, _, e in crit['crit_tps']}
+            for tp_num in tps:
+                e = tp_map.get(tp_num)
+                if e is None: continue
+                q = self._get_hydro(e, node)
+                t = e.get('time', [])[:len(q)] if q is not None else []
+                if q is None: continue
+                raw  = os.path.splitext(e['fname'])[0]
+                m    = re.search(r'aep\d', raw, re.IGNORECASE)
+                stem = raw[m.start():] if m else raw
+                fname = os.path.join(folder, f"{stem}_hydro.csv")
+                with open(fname, 'w', newline='') as f:
+                    w = csv_mod.writer(f)
+                    w.writerow(["Time (hr)", "Flow (cms)"])
+                    for tv, qv in zip(t, q):
+                        w.writerow([f"{tv:.4f}", f"{float(qv):.6f}"])
+                saved.append(os.path.basename(fname))
         msg = f"Exported {len(saved)} hydrograph CSV(s) to:\n{folder}"
         if skipped: msg += f"\n\nSkipped: {', '.join(skipped)}"
         QMessageBox.information(self, "Export Hydrographs", msg)
@@ -1017,24 +1081,30 @@ class RorbResultsDialog(QDialog):
         scen = self._exp_scenario()
         node = self._exp_node_combo.currentText() or None
         aeps = self._selected_export_aeps()
+        tps  = self._selected_export_tps()
         if not aeps: QMessageBox.warning(self, "Export", "Select at least one AEP."); return
+        if not tps:  QMessageBox.warning(self, "Export", "Select at least one TP."); return
         saved, skipped = [], []
         for aep in aeps:
             crit = self._compute_critical(aep, node, scen)
             if not crit: skipped.append(aep); continue
-            e = crit['rep_entry']
-            rain_t = e.get('rain_t', []); rain_mm = e.get('rain_mm', [])
-            if not rain_mm: skipped.append(aep); continue
-            raw  = os.path.splitext(e['fname'])[0]
-            m    = re.search(r'aep\d', raw, re.IGNORECASE)
-            stem = raw[m.start():] if m else raw
-            fname = os.path.join(folder, f"{stem}_rf.csv")
-            with open(fname, 'w', newline='') as f:
-                w = csv_mod.writer(f)
-                w.writerow(["Time (hr)", "Rainfall (mm)"])
-                for tv, rv in zip(rain_t, rain_mm):
-                    w.writerow([f"{tv:.4f}", f"{rv:.4f}"])
-            saved.append(os.path.basename(fname))
+            tp_map = {tp: e for tp, _, e in crit['crit_tps']}
+            for tp_num in tps:
+                e = tp_map.get(tp_num)
+                if e is None: continue
+                rain_t  = e.get('rain_t',  [])
+                rain_mm = e.get('rain_mm', [])
+                if not rain_mm: continue
+                raw  = os.path.splitext(e['fname'])[0]
+                m    = re.search(r'aep\d', raw, re.IGNORECASE)
+                stem = raw[m.start():] if m else raw
+                fname = os.path.join(folder, f"{stem}_rf.csv")
+                with open(fname, 'w', newline='') as f:
+                    w = csv_mod.writer(f)
+                    w.writerow(["Time (hr)", "Rainfall (mm)"])
+                    for tv, rv in zip(rain_t, rain_mm):
+                        w.writerow([f"{tv:.4f}", f"{rv:.4f}"])
+                saved.append(os.path.basename(fname))
         msg = f"Exported {len(saved)} hyetograph CSV(s) to:\n{folder}"
-        if skipped: msg += f"\n\nSkipped (no rainfall data): {', '.join(skipped)}"
+        if skipped: msg += f"\n\nSkipped (no data): {', '.join(skipped)}"
         QMessageBox.information(self, "Export Hyetographs", msg)
