@@ -205,6 +205,13 @@ class RorbResultsDialog(QDialog):
         sbar.addWidget(self._scan_progress)
         sbar.addWidget(self._scan_status)
         sbar.addStretch()
+        sbar.addWidget(QLabel("Rep TP:"))
+        self._rep_method = QComboBox()
+        self._rep_method.addItem("Closest to mean",   "closest")
+        self._rep_method.addItem("Closest ≥ mean",    "above")
+        self._rep_method.setFixedWidth(150)
+        self._rep_method.currentIndexChanged.connect(self._on_rep_method_changed)
+        sbar.addWidget(self._rep_method)
         root.addLayout(sbar)
 
         self._tabs = QTabWidget()
@@ -647,6 +654,10 @@ class RorbResultsDialog(QDialog):
         self._scan_status.setText(f"Error scanning '{scenario_name}'")
         QMessageBox.critical(self, "Scan error", msg)
 
+    def _on_rep_method_changed(self):
+        self._populate_critical_table()
+        self._replot()
+
     def _on_scenario_changed(self):
         self._active = self._scen_combo.currentText() or None
         self._refresh_all()
@@ -750,8 +761,15 @@ class RorbResultsDialog(QDialog):
         }
         (crit_lbl, crit_min), (mean_peak, crit_tps) = max(
             dur_means.items(), key=lambda x: x[1][0])
-        rep_tp_num, rep_peak, rep_entry = min(
-            crit_tps, key=lambda x: abs(x[1] - mean_peak))
+        method = self._rep_method.currentData() if hasattr(self, '_rep_method') else 'closest'
+        if method == 'above':
+            above = [(tp, pk, e) for tp, pk, e in crit_tps if pk >= mean_peak]
+            pool  = above if above else crit_tps
+            rep_tp_num, rep_peak, rep_entry = min(pool, key=lambda x: x[1] - mean_peak
+                                                  if above else abs(x[1] - mean_peak))
+        else:
+            rep_tp_num, rep_peak, rep_entry = min(
+                crit_tps, key=lambda x: abs(x[1] - mean_peak))
         return {
             'crit_dur': crit_lbl, 'crit_min': crit_min,
             'rep_tp': rep_tp_num, 'rep_peak': rep_peak,

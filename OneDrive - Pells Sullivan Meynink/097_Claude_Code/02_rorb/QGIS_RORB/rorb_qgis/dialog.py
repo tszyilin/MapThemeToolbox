@@ -737,8 +737,15 @@ class RorbModelDialog(QDialog):
             (crit_lbl, crit_min), (mean_peak, crit_rows) = max(
                 dur_summary.items(), key=lambda x: x[1][0])
 
-            # Representative TP = closest to mean
-            rep_row = min(crit_rows, key=lambda r: abs(r['peak'] - mean_peak))
+            # Representative TP
+            method = self._rep_method.currentData() if hasattr(self, '_rep_method') else 'closest'
+            if method == 'above':
+                above = [r for r in crit_rows if r['peak'] >= mean_peak]
+                pool  = above if above else crit_rows
+                rep_row = min(pool, key=lambda r: r['peak'] - mean_peak
+                              if above else abs(r['peak'] - mean_peak))
+            else:
+                rep_row = min(crit_rows, key=lambda r: abs(r['peak'] - mean_peak))
 
             # All mean peaks for this AEP (for logging)
             dur_means = {lbl: round(v, 3) for (lbl, _), (v, _) in dur_summary.items()}
@@ -1011,6 +1018,12 @@ class RorbModelDialog(QDialog):
         crit_hdr.addWidget(QLabel(
             "Critical Events  (ARR 2016: mean of TPs -> critical duration -> rep TP):"))
         crit_hdr.addStretch()
+        crit_hdr.addWidget(QLabel("Rep TP:"))
+        self._rep_method = QComboBox()
+        self._rep_method.addItem("Closest to mean", "closest")
+        self._rep_method.addItem("Closest ≥ mean", "above")
+        self._rep_method.setFixedWidth(150)
+        crit_hdr.addWidget(self._rep_method)
         crit_exp = QPushButton("Export Critical CSV...")
         crit_exp.clicked.connect(self._export_critical_csv)
         crit_hdr.addWidget(crit_exp)
