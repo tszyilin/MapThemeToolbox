@@ -354,22 +354,58 @@ def parse_out_rainfall(path):
     return time_hr, rain_mm, dt_hr
 
 
+def _parse_site_names(lines):
+    """
+    Parse the 'Site  Description' table in a RORB .out file.
+
+    Format:
+        Site  Description
+          01  Calculated hydrograph, N_01
+          02  Calculated hydrograph, N outlet
+
+    Returns dict mapping 'Hyd0001' → 'N_01', 'Hyd0002' → 'N outlet', …
+    Names with nothing after the comma are omitted (fallback to Hyd000x).
+    """
+    mapping = {}
+    in_table = False
+    for line in lines:
+        if re.match(r'\s*Site\s+Description', line):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m = re.match(r'(\d+)\s+Calculated hydrograph,\s*(.+)', stripped)
+        if m:
+            site_num = int(m.group(1))
+            name     = m.group(2).strip()
+            if name:
+                mapping[f'Hyd{site_num:04d}'] = name
+        elif mapping:
+            break   # end of table
+    return mapping
+
+
 def parse_out_hydrograph(path):
     """
     Parse the 'Hydrograph summary' table from a RORB .out file.
+
+    Node labels come from the 'Site  Description' section
+    (e.g. 'N_01', 'Total Outlet') rather than the raw 'Hyd0001' column
+    headers.  Falls back to 'Hyd000x' when no name is defined.
 
     Returns
     -------
     nodes      : dict  {node_label: np.ndarray of flow [m³/s]}
     time_axis  : list  of time values [hr]
     dt         : float  time step [hr]  (None if only 1 row)
-
-    The table starts with a header row like:
-        Inc    Time   Hyd0001   Hyd0002  …
-    followed by data rows:
-        0    0.00     0.000    0.000  …
     """
     lines = Path(path).read_text(errors='replace').splitlines()
+
+    # Build Hyd000x → descriptive-name mapping from the site table
+    site_names = _parse_site_names(lines)
 
     # Locate the "Inc    Time" header row
     hdr_idx = None
@@ -380,8 +416,9 @@ def parse_out_hydrograph(path):
     if hdr_idx is None:
         return {}, [], None
 
-    # Node names are every token after 'Inc' and 'Time'
-    node_names = lines[hdr_idx].split()[2:]
+    # Apply descriptive names where available
+    raw_names  = lines[hdr_idx].split()[2:]
+    node_names = [site_names.get(n, n) for n in raw_names]
 
     times  = []
     arrays = [[] for _ in node_names]
@@ -389,7 +426,6 @@ def parse_out_hydrograph(path):
     for line in lines[hdr_idx + 1:]:
         parts = line.split()
         if len(parts) < 2 + len(node_names):
-            # allow partial rows only if we already have data
             if times:
                 break
             continue
