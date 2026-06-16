@@ -358,13 +358,15 @@ def _parse_site_names(lines):
     """
     Parse the 'Site  Description' table in a RORB .out file.
 
-    Format:
-        Site  Description
-          01  Calculated hydrograph, N_01
-          02  Calculated hydrograph, N outlet
+    Handles multiple RORB description formats, e.g.:
+      01  Calculated hydrograph, Western_Outlet
+      02  Calc. hyd. for ungauged interstation site at: node_21
 
-    Returns dict mapping 'Hyd0001' → 'N_01', 'Hyd0002' → 'N outlet', …
-    Names with nothing after the comma are omitted (fallback to Hyd000x).
+    Strategy: for each site row, take everything after the last ',' or ':'
+    as the node name.
+
+    Returns dict mapping 'Hyd0001' → 'Western_Outlet', etc.
+    Falls back to Hyd000x when no name can be extracted.
     """
     mapping = {}
     in_table = False
@@ -377,14 +379,20 @@ def _parse_site_names(lines):
         stripped = line.strip()
         if not stripped:
             continue
-        m = re.match(r'(\d+)\s+Calculated hydrograph,\s*(.+)', stripped)
-        if m:
-            site_num = int(m.group(1))
-            name     = m.group(2).strip()
+        # Each site row starts with a numeric site number
+        m = re.match(r'(\d+)\s+(.+)', stripped)
+        if not m:
+            if mapping:
+                break
+            continue
+        site_num = int(m.group(1))
+        desc     = m.group(2).strip()
+        # Extract name: everything after the last ':' or ','
+        name_m = re.search(r'[,:]\s*(\S[^,:]*?)\s*$', desc)
+        if name_m:
+            name = name_m.group(1).strip()
             if name:
                 mapping[f'Hyd{site_num:04d}'] = name
-        elif mapping:
-            break   # end of table
     return mapping
 
 

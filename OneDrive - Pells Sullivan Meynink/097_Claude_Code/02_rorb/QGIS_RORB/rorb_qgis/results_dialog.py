@@ -293,6 +293,9 @@ class RorbResultsDialog(QDialog):
         self._crit_table.setMaximumHeight(220)
         self._crit_table.selectionModel().selectionChanged.connect(
             self._on_crit_row_selected)
+        self._crit_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._crit_table.customContextMenuRequested.connect(
+            self._crit_table_context_menu)
         lay.addWidget(self._crit_table)
 
         if HAS_MPL:
@@ -363,6 +366,40 @@ class RorbResultsDialog(QDialog):
             pk_t = t[int(np.argmax(q))]
             self._crit_ax.set_xlim(0, min(t[-1], pk_t * 3 + 2))
         self._crit_canvas.draw()
+
+    def _crit_table_context_menu(self, pos):
+        from qgis.PyQt.QtWidgets import QMenu
+        from qgis.PyQt.QtGui import QDesktopServices
+        from qgis.PyQt.QtCore import QUrl
+
+        rows = self._crit_table.selectionModel().selectedRows()
+        if not rows or rows[0].row() >= len(self._crit_rows):
+            return
+        crit      = self._crit_rows[rows[0].row()]
+        rep_entry = crit.get('rep_entry', {})
+        out_path  = rep_entry.get('path', '')
+        stm_path  = os.path.splitext(out_path)[0] + '.stm' if out_path else ''
+
+        menu = QMenu(self._crit_table)
+        act_out = menu.addAction(
+            f"Open .out  ({os.path.basename(out_path)})" if out_path else "Open .out")
+        act_out.setEnabled(bool(out_path) and os.path.exists(out_path))
+
+        act_stm = menu.addAction(
+            f"Open .stm  ({os.path.basename(stm_path)})" if stm_path else "Open .stm")
+        act_stm.setEnabled(bool(stm_path) and os.path.exists(stm_path))
+
+        menu.addSeparator()
+        act_dir = menu.addAction("Open containing folder")
+        act_dir.setEnabled(bool(out_path))
+
+        action = menu.exec_(self._crit_table.viewport().mapToGlobal(pos))
+        if action == act_out and os.path.exists(out_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(out_path))
+        elif action == act_stm and os.path.exists(stm_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(stm_path))
+        elif action == act_dir and out_path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(out_path)))
 
     def _export_critical_csv(self):
         if not self._crit_rows:
