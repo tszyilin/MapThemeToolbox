@@ -24,6 +24,7 @@ from qgis.PyQt.QtWidgets import (
     QHeaderView, QFileDialog, QMessageBox,
     QLineEdit, QCheckBox, QScrollArea,
     QProgressBar, QSplitter, QInputDialog,
+    QRadioButton, QButtonGroup,
 )
 from qgis.PyQt.QtCore import Qt, QThread, pyqtSignal
 from qgis.PyQt.QtGui import QFont, QColor
@@ -476,28 +477,44 @@ class RorbResultsDialog(QDialog):
     def _tab_compare(self):
         w = QWidget(); root = QVBoxLayout(w)
 
-        ctrl = QHBoxLayout()
-        ctrl.addWidget(QLabel("Scenario A:"))
-        self._cmp_a = QComboBox(); self._cmp_a.setMinimumWidth(160)
-        ctrl.addWidget(self._cmp_a)
-        ctrl.addWidget(QLabel("Scenario B:"))
-        self._cmp_b = QComboBox(); self._cmp_b.setMinimumWidth(160)
-        ctrl.addWidget(self._cmp_b)
-        ctrl.addWidget(QLabel("Node:"))
-        self._cmp_node = QComboBox(); self._cmp_node.setMinimumWidth(140)
-        ctrl.addWidget(self._cmp_node)
-        run_btn = QPushButton("Compare"); run_btn.setMinimumHeight(30)
-        run_btn.clicked.connect(self._run_compare)
-        ctrl.addWidget(run_btn)
-        ctrl.addStretch(); root.addLayout(ctrl)
+        # ── Scenario rows ─────────────────────────────────────────────────
+        scen_box = QGroupBox("Scenarios to Compare")
+        scen_lay = QVBoxLayout(scen_box)
+        self._cmp_scen_container = QWidget()
+        self._cmp_scen_vbox      = QVBoxLayout(self._cmp_scen_container)
+        self._cmp_scen_vbox.setSpacing(3); self._cmp_scen_vbox.setContentsMargins(0,0,0,0)
+        scen_lay.addWidget(self._cmp_scen_container)
+        add_row_btn = QPushButton("+ Add Scenario"); add_row_btn.setFixedWidth(120)
+        add_row_btn.clicked.connect(self._cmp_add_row)
+        scen_lay.addWidget(add_row_btn)
+        root.addWidget(scen_box)
+        self._cmp_scenario_rows = []   # list of {'scen': combo, 'node': combo, 'w': widget}
 
-        # Delta table
-        self._cmp_table = QTableWidget(0, 8)
-        self._cmp_table.setHorizontalHeaderLabels([
-            "AEP",
-            "Crit Dur (A)", "Peak A (m3/s)",
-            "Crit Dur (B)", "Peak B (m3/s)",
-            "Δ (m3/s)", "Δ (%)", "Critical?"])
+        # ── Compare-by metric ─────────────────────────────────────────────
+        metric_box = QGroupBox("Compare by")
+        metric_lay = QHBoxLayout(metric_box)
+        self._cmp_metric = QButtonGroup()
+        for i, (lbl, key) in enumerate([
+                ("Peak flow (m³/s)",    "peak"),
+                ("Critical duration",   "crit_dur"),
+                ("Time to peak (hr)",   "ttp")]):
+            rb = QRadioButton(lbl)
+            if i == 0: rb.setChecked(True)
+            self._cmp_metric.addButton(rb, i)
+            metric_lay.addWidget(rb)
+        metric_lay.addStretch()
+        root.addWidget(metric_box)
+
+        # ── Run button ────────────────────────────────────────────────────
+        ctrl = QHBoxLayout()
+        run_btn = QPushButton("Compare"); run_btn.setMinimumHeight(30)
+        run_btn.setFixedWidth(100)
+        run_btn.clicked.connect(self._run_compare)
+        ctrl.addWidget(run_btn); ctrl.addStretch()
+        root.addLayout(ctrl)
+
+        # ── Results table (dynamic columns) ──────────────────────────────
+        self._cmp_table = QTableWidget(0, 1)
         self._cmp_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self._cmp_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._cmp_table.setAlternatingRowColors(True)
@@ -507,92 +524,181 @@ class RorbResultsDialog(QDialog):
             self._on_cmp_row_selected)
         root.addWidget(self._cmp_table)
 
-        # Overlay plot
+        # ── Overlay plot ──────────────────────────────────────────────────
         if HAS_MPL:
-            self._cmp_fig = Figure(figsize=(8, 3.5), tight_layout=True)
-            self._cmp_ax  = self._cmp_fig.add_subplot(111)
+            self._cmp_fig    = Figure(figsize=(8, 3.5), tight_layout=True)
+            self._cmp_ax     = self._cmp_fig.add_subplot(111)
             self._cmp_canvas = FigureCanvas(self._cmp_fig)
             root.addWidget(self._cmp_canvas)
         else:
             self._cmp_ax = self._cmp_canvas = None
 
-        self._cmp_rows = []   # list of (aep, crit_a, crit_b)
+        self._cmp_data_rows = []   # list of (aep, [crits], [nodes], [names])
         return w
 
+    # ── Compare helpers ───────────────────────────────────────────────────────
+
+    def _cmp_add_row(self, scen_name=None):
+        row_w = QWidget(); row_l = QHBoxLayout(row_w)
+        row_l.setContentsMargins(0, 1, 0, 1); row_l.setSpacing(6)
+
+        scen_combo = QComboBox(); scen_combo.setMinimumWidth(180)
+        node_combo = QComboBox(); node_combo.setMinimumWidth(150)
+
+        # Populate scenario combo
+        for name in self._scenarios.keys():
+            scen_combo.addItem(name)
+        if scen_name and scen_name in self._scenarios:
+            scen_combo.setCurrentText(scen_name)
+        elif self._cmp_scenario_rows:
+            # Default to next scenario to avoid duplicates
+            used = {rd['scen'].currentText() for rd in self._cmp_scenario_rows}
+            for name in self._scenarios:
+                if name not in used:
+                    scen_combo.setCurrentText(name); break
+
+        scen_combo.currentIndexChanged.connect(
+            lambda: self._cmp_refresh_node(scen_combo, node_combo))
+        self._cmp_refresh_node(scen_combo, node_combo)
+
+        rem_btn = QPushButton("✕"); rem_btn.setFixedSize(22, 22)
+
+        row_l.addWidget(QLabel("Scenario:")); row_l.addWidget(scen_combo)
+        row_l.addWidget(QLabel("Node:"));     row_l.addWidget(node_combo)
+        row_l.addWidget(rem_btn); row_l.addStretch()
+
+        rd = {'scen': scen_combo, 'node': node_combo, 'w': row_w}
+        self._cmp_scenario_rows.append(rd)
+        self._cmp_scen_vbox.addWidget(row_w)
+        rem_btn.clicked.connect(lambda: self._cmp_remove_row(rd))
+
+    def _cmp_remove_row(self, rd):
+        if len(self._cmp_scenario_rows) <= 2:
+            QMessageBox.information(self, "Compare", "Need at least 2 scenarios.")
+            return
+        self._cmp_scenario_rows.remove(rd)
+        rd['w'].deleteLater()
+
+    def _cmp_refresh_node(self, scen_combo, node_combo):
+        name  = scen_combo.currentText()
+        nodes = self._all_nodes(name)
+        node_combo.blockSignals(True); node_combo.clear()
+        for n in nodes: node_combo.addItem(n)
+        node_combo.blockSignals(False)
+
     def _run_compare(self):
-        name_a = self._cmp_a.currentText()
-        name_b = self._cmp_b.currentText()
-        node   = self._cmp_node.currentText() or None
-        if not name_a or not name_b:
-            QMessageBox.warning(self, "Compare", "Select two scenarios."); return
-        if name_a == name_b:
-            QMessageBox.warning(self, "Compare", "Select two different scenarios."); return
+        if len(self._cmp_scenario_rows) < 2:
+            QMessageBox.warning(self, "Compare", "Add at least two scenarios."); return
 
-        aeps_a = self._all_aeps(name_a)
-        aeps_b = self._all_aeps(name_b)
-        aeps   = sorted(set(aeps_a) & set(aeps_b), key=_aep_sort_key)
+        names = [rd['scen'].currentText() for rd in self._cmp_scenario_rows]
+        nodes = [rd['node'].currentText() or None for rd in self._cmp_scenario_rows]
 
-        self._cmp_rows = []
+        # Common AEPs across all scenarios
+        aep_sets = [set(self._all_aeps(n)) for n in names]
+        common_aeps = sorted(aep_sets[0].intersection(*aep_sets[1:]), key=_aep_sort_key)
+
+        metric_id = self._cmp_metric.checkedId()   # 0=peak, 1=crit_dur, 2=ttp
+
+        # Build crits per scenario × AEP
+        self._cmp_data_rows = []
+        for aep in common_aeps:
+            crits = [self._compute_critical(aep, nodes[i], names[i])
+                     for i in range(len(names))]
+            if any(c is None for c in crits): continue
+            self._cmp_data_rows.append((aep, crits, nodes, names))
+
+        # Build table columns dynamically
+        if metric_id == 0:    # peak flow
+            scen_cols = []
+            for i, name in enumerate(names):
+                scen_cols += [f"{name}\nCrit Dur", f"{name}\nPeak (m³/s)"]
+            headers = ["AEP"] + scen_cols + ["Range (m³/s)", "Range (%)"]
+        elif metric_id == 1:  # critical duration
+            headers = ["AEP"] + [f"{n}\nCrit Dur" for n in names] + ["Changed?"]
+        else:                 # time to peak
+            headers = ["AEP"] + [f"{n}\nTTP (hr)" for n in names] + ["Range (hr)"]
+
+        self._cmp_table.setColumnCount(len(headers))
+        self._cmp_table.setHorizontalHeaderLabels(headers)
         self._cmp_table.setRowCount(0)
 
-        for aep in aeps:
-            crit_a = self._compute_critical(aep, node, name_a)
-            crit_b = self._compute_critical(aep, node, name_b)
-            if not crit_a or not crit_b:
-                continue
-            self._cmp_rows.append((aep, crit_a, crit_b, node))
-            pk_a = crit_a['rep_peak']; pk_b = crit_b['rep_peak']
-            delta = pk_b - pk_a
-            pct   = (delta / pk_a * 100) if pk_a else 0.0
-            crit_changed = crit_a['crit_dur'] != crit_b['crit_dur']
-
+        for aep, crits, nodes_, names_ in self._cmp_data_rows:
             row = self._cmp_table.rowCount()
             self._cmp_table.insertRow(row)
             self._cmp_table.setItem(row, 0, QTableWidgetItem(aep))
-            self._cmp_table.setItem(row, 1, QTableWidgetItem(crit_a['crit_dur']))
-            pk_a_it = QTableWidgetItem(f"{pk_a:.3f}")
-            pk_a_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self._cmp_table.setItem(row, 2, pk_a_it)
-            self._cmp_table.setItem(row, 3, QTableWidgetItem(crit_b['crit_dur']))
-            pk_b_it = QTableWidgetItem(f"{pk_b:.3f}")
-            pk_b_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self._cmp_table.setItem(row, 4, pk_b_it)
-            d_it = QTableWidgetItem(f"{delta:+.3f}")
-            d_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            d_it.setForeground(QColor('#dc2626' if delta > 0 else '#16a34a'))
-            self._cmp_table.setItem(row, 5, d_it)
-            p_it = QTableWidgetItem(f"{pct:+.1f}%")
-            p_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            p_it.setForeground(QColor('#dc2626' if pct > 0 else '#16a34a'))
-            self._cmp_table.setItem(row, 6, p_it)
-            cc_it = QTableWidgetItem("Yes" if crit_changed else "—")
-            cc_it.setTextAlignment(Qt.AlignCenter)
-            if crit_changed:
-                cc_it.setForeground(QColor('#ea580c'))
-            self._cmp_table.setItem(row, 7, cc_it)
+
+            if metric_id == 0:
+                peaks = [c['rep_peak'] for c in crits]
+                col = 1
+                for i, c in enumerate(crits):
+                    self._cmp_table.setItem(row, col, QTableWidgetItem(c['crit_dur']))
+                    pk_it = QTableWidgetItem(f"{peaks[i]:.3f}")
+                    pk_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    pk_it.setForeground(QColor(_SCENARIO_COLORS[i % len(_SCENARIO_COLORS)]))
+                    self._cmp_table.setItem(row, col + 1, pk_it)
+                    col += 2
+                rng = max(peaks) - min(peaks)
+                pct = (rng / min(peaks) * 100) if min(peaks) else 0
+                r_it = QTableWidgetItem(f"{rng:.3f}")
+                r_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                r_it.setForeground(QColor('#dc2626' if rng > 0 else '#6b7280'))
+                self._cmp_table.setItem(row, col, r_it)
+                p_it = QTableWidgetItem(f"{pct:.1f}%")
+                p_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self._cmp_table.setItem(row, col + 1, p_it)
+
+            elif metric_id == 1:
+                durs  = [c['crit_dur'] for c in crits]
+                changed = len(set(durs)) > 1
+                for i, d in enumerate(durs):
+                    it = QTableWidgetItem(d)
+                    if changed: it.setForeground(QColor('#ea580c'))
+                    self._cmp_table.setItem(row, i + 1, it)
+                cc_it = QTableWidgetItem("Yes ⚠" if changed else "—")
+                cc_it.setTextAlignment(Qt.AlignCenter)
+                if changed: cc_it.setForeground(QColor('#ea580c'))
+                self._cmp_table.setItem(row, len(crits) + 1, cc_it)
+
+            else:  # ttp
+                ttps = []
+                for i, c in enumerate(crits):
+                    q = self._get_hydro(c['rep_entry'], nodes_[i])
+                    t = c['rep_entry'].get('time', [])
+                    ttp = 0.0
+                    if q is not None and len(q):
+                        pk_idx = int(np.argmax(q))
+                        ttp = t[pk_idx] if pk_idx < len(t) else 0.0
+                    ttps.append(ttp)
+                    ttp_it = QTableWidgetItem(f"{ttp:.2f}")
+                    ttp_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    ttp_it.setForeground(
+                        QColor(_SCENARIO_COLORS[i % len(_SCENARIO_COLORS)]))
+                    self._cmp_table.setItem(row, i + 1, ttp_it)
+                rng = max(ttps) - min(ttps) if ttps else 0
+                r_it = QTableWidgetItem(f"{rng:.2f}")
+                r_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self._cmp_table.setItem(row, len(crits) + 1, r_it)
 
     def _on_cmp_row_selected(self):
-        if not HAS_MPL or not self._cmp_rows: return
+        if not HAS_MPL or not self._cmp_data_rows: return
         rows = self._cmp_table.selectionModel().selectedRows()
-        if not rows or rows[0].row() >= len(self._cmp_rows): return
-        aep, crit_a, crit_b, node = self._cmp_rows[rows[0].row()]
-        name_a = self._cmp_a.currentText()
-        name_b = self._cmp_b.currentText()
-        col_a  = _SCENARIO_COLORS[0]; col_b = _SCENARIO_COLORS[1]
+        if not rows or rows[0].row() >= len(self._cmp_data_rows): return
+        aep, crits, nodes, names = self._cmp_data_rows[rows[0].row()]
 
         self._cmp_ax.clear()
-        for crit, col, name, ls in (
-                (crit_a, col_a, name_a, '-'),
-                (crit_b, col_b, name_b, '--')):
+        linestyles = ['-', '--', ':', '-.']
+        for i, (crit, node, name) in enumerate(zip(crits, nodes, names)):
             q = self._get_hydro(crit['rep_entry'], node)
             t = crit['rep_entry'].get('time', [])[:len(q)] if q is not None else []
             if q is None: continue
+            col = _SCENARIO_COLORS[i % len(_SCENARIO_COLORS)]
+            ls  = linestyles[i % len(linestyles)]
             self._cmp_ax.plot(t, q, color=col, linewidth=2, linestyle=ls,
                               label=f"{name}  TP{crit['rep_tp']}  "
                                     f"({crit['rep_peak']:.3f} m³/s)")
 
         self._cmp_ax.set_xlabel("Time (hr)"); self._cmp_ax.set_ylabel("Flow (m³/s)")
-        self._cmp_ax.set_title(f"{aep}  |  Critical duration comparison", fontsize=10)
+        self._cmp_ax.set_title(f"{aep}  |  Scenario comparison", fontsize=10)
         self._cmp_ax.grid(True, alpha=0.25)
         self._cmp_ax.legend(fontsize=8)
         self._cmp_canvas.draw()
@@ -980,25 +1086,21 @@ class RorbResultsDialog(QDialog):
 
     def _refresh_compare_combos(self):
         names = list(self._scenarios.keys())
-        for combo in (self._cmp_a, self._cmp_b):
-            cur = combo.currentText()
-            combo.blockSignals(True); combo.clear()
-            for n in names: combo.addItem(n)
-            if cur in names: combo.setCurrentText(cur)
-            combo.blockSignals(False)
-        # node combo for compare
-        all_nodes = []
-        for files in self._scenarios.values():
-            for e in files.values():
-                for n in e.get('nodes', {}):
-                    if n not in all_nodes: all_nodes.append(n)
-        self._cmp_node.blockSignals(True); self._cmp_node.clear()
-        for n in all_nodes: self._cmp_node.addItem(n)
-        self._cmp_node.blockSignals(False)
-        # default A/B to first two scenarios
-        if len(names) >= 2:
-            self._cmp_a.setCurrentIndex(0)
-            self._cmp_b.setCurrentIndex(1)
+
+        # If no rows yet, seed with first two scenarios
+        if not self._cmp_scenario_rows:
+            for i, name in enumerate(names[:4]):
+                self._cmp_add_row(name)
+            return
+
+        # Update existing rows
+        for rd in self._cmp_scenario_rows:
+            cur = rd['scen'].currentText()
+            rd['scen'].blockSignals(True); rd['scen'].clear()
+            for n in names: rd['scen'].addItem(n)
+            if cur in names: rd['scen'].setCurrentText(cur)
+            rd['scen'].blockSignals(False)
+            self._cmp_refresh_node(rd['scen'], rd['node'])
 
     # ── Data helpers ──────────────────────────────────────────────────────────
 
