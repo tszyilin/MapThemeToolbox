@@ -602,17 +602,14 @@ class RorbResultsDialog(QDialog):
     def _tab_export(self):
         w = QWidget(); lay = QVBoxLayout(w)
 
-        # ── Settings ──────────────────────────────────────────────────────
+        # ── 1. Export Settings (unchanged) ────────────────────────────────
         box = QGroupBox("Export Settings"); form = QFormLayout(box)
-
         self._exp_scen_combo = QComboBox(); self._exp_scen_combo.setMinimumWidth(200)
         self._exp_scen_combo.currentIndexChanged.connect(self._on_exp_scen_changed)
         form.addRow("Scenario:", self._exp_scen_combo)
-
         self._exp_node_combo = QComboBox(); self._exp_node_combo.setMinimumWidth(240)
-        self._exp_node_combo.currentIndexChanged.connect(self._refresh_export_info)
+        self._exp_node_combo.currentIndexChanged.connect(self._on_exp_node_changed)
         form.addRow("Node (print point):", self._exp_node_combo)
-
         folder_row = QHBoxLayout()
         self._exp_folder_edit = QLineEdit(); self._exp_folder_edit.setReadOnly(True)
         self._exp_folder_edit.setPlaceholderText("Browse to output folder …")
@@ -622,104 +619,248 @@ class RorbResultsDialog(QDialog):
         form.addRow("Save folder:", folder_row)
         lay.addWidget(box)
 
-        # ── AEP selection ──────────────────────────────────────────────────
-        aep_box = QGroupBox("AEP Selection")
-        aep_lay = QVBoxLayout(aep_box)
-        aep_btn_row = QHBoxLayout()
-        all_btn  = QPushButton("All");  all_btn.setFixedWidth(40)
-        none_btn = QPushButton("None"); none_btn.setFixedWidth(45)
-        all_btn.clicked.connect(lambda: self._toggle_exp_aeps(True))
-        none_btn.clicked.connect(lambda: self._toggle_exp_aeps(False))
-        aep_btn_row.addWidget(all_btn); aep_btn_row.addWidget(none_btn)
-        aep_btn_row.addStretch(); aep_lay.addLayout(aep_btn_row)
-        self._exp_aep_scroll = QScrollArea(); self._exp_aep_scroll.setWidgetResizable(True)
-        self._exp_aep_scroll.setMaximumHeight(120)
-        self._exp_aep_inner = QWidget(); self._exp_aep_grid = QHBoxLayout(self._exp_aep_inner)
-        self._exp_aep_grid.setSpacing(8); self._exp_aep_grid.addStretch()
-        self._exp_aep_scroll.setWidget(self._exp_aep_inner)
-        aep_lay.addWidget(self._exp_aep_scroll)
-        lay.addWidget(aep_box)
-        self._exp_aep_chks = {}   # aep_label -> QCheckBox
+        splitter = QSplitter(Qt.Vertical)
 
-        # ── TP selection ───────────────────────────────────────────────────
-        tp_box = QGroupBox("Temporal Patterns  (critical duration per AEP  —  ★ = rep TP)")
-        tp_lay = QVBoxLayout(tp_box)
-        tp_btn_row = QHBoxLayout()
-        tp_all  = QPushButton("All");  tp_all.setFixedWidth(40)
-        tp_none = QPushButton("None"); tp_none.setFixedWidth(45)
-        tp_all.clicked.connect(lambda: self._toggle_exp_tps(True))
-        tp_none.clicked.connect(lambda: self._toggle_exp_tps(False))
-        tp_btn_row.addWidget(tp_all); tp_btn_row.addWidget(tp_none); tp_btn_row.addStretch()
-        tp_lay.addLayout(tp_btn_row)
-        self._exp_tp_scroll = QScrollArea(); self._exp_tp_scroll.setWidgetResizable(True)
-        self._exp_tp_scroll.setMaximumHeight(80)
-        self._exp_tp_inner = QWidget(); self._exp_tp_grid = QHBoxLayout(self._exp_tp_inner)
-        self._exp_tp_grid.setSpacing(8); self._exp_tp_grid.addStretch()
-        self._exp_tp_scroll.setWidget(self._exp_tp_inner)
-        tp_lay.addWidget(self._exp_tp_scroll)
-        lay.addWidget(tp_box)
-        self._exp_tp_chks = {}    # tp_num -> QCheckBox
+        # ── 2. Selected Critical Events ───────────────────────────────────
+        crit_w = QWidget(); crit_lay = QVBoxLayout(crit_w)
+        crit_lay.setContentsMargins(0, 4, 0, 0)
+        crit_hdr = QHBoxLayout()
+        crit_hdr.addWidget(QLabel("<b>Selected Critical Events</b>"))
+        crit_hdr.addStretch()
+        all_c  = QPushButton("All");  all_c.setFixedWidth(38)
+        none_c = QPushButton("None"); none_c.setFixedWidth(45)
+        all_c.clicked.connect(lambda: self._toggle_crit_events(True))
+        none_c.clicked.connect(lambda: self._toggle_crit_events(False))
+        crit_hdr.addWidget(all_c); crit_hdr.addWidget(none_c)
+        crit_lay.addLayout(crit_hdr)
+        self._exp_crit_table = QTableWidget(0, 4)
+        self._exp_crit_table.setHorizontalHeaderLabels(
+            ["AEP", "Critical Duration", "Rep TP", "Rep Peak (m³/s)"])
+        self._exp_crit_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._exp_crit_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._exp_crit_table.setAlternatingRowColors(True)
+        self._exp_crit_table.itemChanged.connect(self._refresh_preview)
+        crit_lay.addWidget(self._exp_crit_table)
+        splitter.addWidget(crit_w)
 
-        # ── Info + buttons ────────────────────────────────────────────────
-        self._exp_info = QLabel("Select a scenario and node.")
-        self._exp_info.setWordWrap(True); self._exp_info.setFont(QFont("Courier New", 8))
-        self._exp_info.setStyleSheet("background:#f8f9fa;padding:8px;border:1px solid #dee2e6;")
-        lay.addWidget(self._exp_info)
+        # ── 3. Extra Events ───────────────────────────────────────────────
+        extra_w = QWidget(); extra_lay = QVBoxLayout(extra_w)
+        extra_lay.setContentsMargins(0, 4, 0, 0)
+        extra_lay.addWidget(QLabel("<b>Extra Events</b>"))
+        pick = QHBoxLayout()
+        pick.addWidget(QLabel("AEP:"))
+        self._extra_aep_combo = QComboBox(); self._extra_aep_combo.setMinimumWidth(120)
+        self._extra_aep_combo.currentIndexChanged.connect(self._refresh_extra_dur)
+        pick.addWidget(self._extra_aep_combo)
+        pick.addWidget(QLabel("Duration:"))
+        self._extra_dur_combo = QComboBox(); self._extra_dur_combo.setMinimumWidth(100)
+        self._extra_dur_combo.currentIndexChanged.connect(self._refresh_extra_tp)
+        pick.addWidget(self._extra_dur_combo)
+        pick.addWidget(QLabel("TP:"))
+        self._extra_tp_combo = QComboBox(); self._extra_tp_combo.setMinimumWidth(80)
+        pick.addWidget(self._extra_tp_combo)
+        add_btn = QPushButton("Add"); add_btn.setFixedWidth(50)
+        add_btn.clicked.connect(self._add_extra_event)
+        pick.addWidget(add_btn); pick.addStretch()
+        extra_lay.addLayout(pick)
+        self._exp_extra_table = QTableWidget(0, 3)
+        self._exp_extra_table.setHorizontalHeaderLabels(["AEP", "Duration", "TP"])
+        self._exp_extra_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._exp_extra_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._exp_extra_table.setAlternatingRowColors(True)
+        self._exp_extra_table.setSelectionBehavior(QTableWidget.SelectRows)
+        rem_btn = QPushButton("Remove selected"); rem_btn.setFixedWidth(130)
+        rem_btn.clicked.connect(self._remove_extra_event)
+        rem_row = QHBoxLayout(); rem_row.addWidget(rem_btn); rem_row.addStretch()
+        extra_lay.addWidget(self._exp_extra_table)
+        extra_lay.addLayout(rem_row)
+        splitter.addWidget(extra_w)
+        self._exp_extra_rows = []   # (aep, dur_label, dur_min, tp_num, entry)
 
+        # ── 4. Preview ────────────────────────────────────────────────────
+        prev_w = QWidget(); prev_lay = QVBoxLayout(prev_w)
+        prev_lay.setContentsMargins(0, 4, 0, 0)
+        prev_lay.addWidget(QLabel("<b>Preview</b>  — files to export  "
+                                  "( _hydro.csv  /  _rf.csv )"))
+        self._exp_preview_table = QTableWidget(0, 5)
+        self._exp_preview_table.setHorizontalHeaderLabels(
+            ["Source", "AEP", "Duration", "TP", "Filename stem"])
+        self._exp_preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._exp_preview_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._exp_preview_table.setAlternatingRowColors(True)
+        prev_lay.addWidget(self._exp_preview_table)
+        splitter.addWidget(prev_w)
+
+        splitter.setSizes([180, 130, 160])
+        lay.addWidget(splitter)
+
+        # ── Buttons ───────────────────────────────────────────────────────
         brow = QHBoxLayout()
-        hydro_btn = QPushButton("Export Hydrographs")
-        hydro_btn.setMinimumHeight(36); hydro_btn.clicked.connect(self._export_hydros)
-        hyeto_btn = QPushButton("Export Hyetographs")
-        hyeto_btn.setMinimumHeight(36); hyeto_btn.clicked.connect(self._export_hyetos)
+        hydro_btn = QPushButton("Export Hydrographs  (_hydro.csv)")
+        hydro_btn.setMinimumHeight(34); hydro_btn.clicked.connect(self._export_hydros)
+        hyeto_btn = QPushButton("Export Hyetographs  (_rf.csv)")
+        hyeto_btn.setMinimumHeight(34); hyeto_btn.clicked.connect(self._export_hyetos)
         brow.addWidget(hydro_btn); brow.addWidget(hyeto_btn); brow.addStretch()
-        lay.addLayout(brow); lay.addStretch()
+        lay.addLayout(brow)
         return w
 
-    def _toggle_exp_aeps(self, state):
-        for cb in self._exp_aep_chks.values(): cb.setChecked(state)
-        self._refresh_export_tps()
-
-    def _toggle_exp_tps(self, state):
-        for cb in self._exp_tp_chks.values(): cb.setChecked(state)
-
-    def _refresh_export_tps(self):
-        """Rebuild TP checkboxes from the critical duration of selected AEPs."""
-        while self._exp_tp_grid.count():
-            item = self._exp_tp_grid.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
-        self._exp_tp_chks.clear()
-
-        scen = self._exp_scenario()
-        node = self._exp_node_combo.currentText() or None
-
-        # Collect all TPs at the critical duration across selected AEPs
-        all_tp_nums = set()
-        rep_tp_nums = set()
-        for aep in self._selected_export_aeps():
-            crit = self._compute_critical(aep, node, scen)
-            if not crit: continue
-            rep_tp_nums.add(crit['rep_tp'])
-            for tp_num, _, _ in crit['crit_tps']:
-                all_tp_nums.add(tp_num)
-
-        for tp_num in sorted(all_tp_nums):
-            is_rep = tp_num in rep_tp_nums
-            label  = f"TP{tp_num}" + (" ★" if is_rep else "")
-            cb = QCheckBox(label)
-            cb.setChecked(is_rep)   # pre-tick rep TPs; extras start unticked
-            if is_rep:
-                cb.setStyleSheet("font-weight:bold;")
-            self._exp_tp_chks[tp_num] = cb
-            self._exp_tp_grid.addWidget(cb)
-        self._exp_tp_grid.addStretch()
+    # ── Export helpers ────────────────────────────────────────────────────────
 
     def _browse_export_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select output folder", "")
         if folder: self._exp_folder_edit.setText(folder)
 
     def _exp_scenario(self):
-        """Return the scenario name selected in the export tab."""
         return self._exp_scen_combo.currentText() or self._active or None
+
+    def _on_exp_node_changed(self):
+        self._refresh_exp_crit_table()
+        self._refresh_preview()
+
+    def _toggle_crit_events(self, state):
+        self._exp_crit_table.blockSignals(True)
+        for row in range(self._exp_crit_table.rowCount()):
+            it = self._exp_crit_table.item(row, 0)
+            if it: it.setCheckState(Qt.Checked if state else Qt.Unchecked)
+        self._exp_crit_table.blockSignals(False)
+        self._refresh_preview()
+
+    def _refresh_exp_crit_table(self):
+        self._exp_crit_table.blockSignals(True)
+        self._exp_crit_table.setRowCount(0)
+        scen = self._exp_scenario()
+        node = self._exp_node_combo.currentText() or None
+        for aep in self._all_aeps(scen):
+            crit = self._compute_critical(aep, node, scen)
+            if not crit: continue
+            row = self._exp_crit_table.rowCount()
+            self._exp_crit_table.insertRow(row)
+            aep_it = QTableWidgetItem(aep)
+            aep_it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            aep_it.setCheckState(Qt.Checked)
+            aep_it.setData(Qt.UserRole, {'aep': aep, **crit})
+            self._exp_crit_table.setItem(row, 0, aep_it)
+            self._exp_crit_table.setItem(row, 1, QTableWidgetItem(crit['crit_dur']))
+            tp_it = QTableWidgetItem(f"TP{crit['rep_tp']}")
+            tp_it.setTextAlignment(Qt.AlignCenter)
+            self._exp_crit_table.setItem(row, 2, tp_it)
+            pk_it = QTableWidgetItem(f"{crit['rep_peak']:.3f}")
+            pk_it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self._exp_crit_table.setItem(row, 3, pk_it)
+        self._exp_crit_table.blockSignals(False)
+
+    def _refresh_extra_aep(self):
+        scen = self._exp_scenario()
+        aeps = self._all_aeps(scen)
+        self._extra_aep_combo.blockSignals(True); self._extra_aep_combo.clear()
+        for a in aeps: self._extra_aep_combo.addItem(a)
+        self._extra_aep_combo.blockSignals(False)
+        self._refresh_extra_dur()
+
+    def _refresh_extra_dur(self):
+        scen = self._exp_scenario()
+        aep  = self._extra_aep_combo.currentText()
+        entries = self._entries_for_aep(aep, scen) if aep else []
+        durs = sorted(set((e['parsed'][1], e['parsed'][2]) for e in entries),
+                      key=lambda x: x[1])
+        self._extra_dur_combo.blockSignals(True); self._extra_dur_combo.clear()
+        for lbl, mins in durs: self._extra_dur_combo.addItem(lbl, mins)
+        self._extra_dur_combo.blockSignals(False)
+        self._refresh_extra_tp()
+
+    def _refresh_extra_tp(self):
+        scen    = self._exp_scenario()
+        aep     = self._extra_aep_combo.currentText()
+        dur_min = self._extra_dur_combo.currentData()
+        entries = self._entries_for_aep(aep, scen) if aep else []
+        if dur_min is not None:
+            entries = [e for e in entries if e['parsed'][2] == dur_min]
+        # Identify rep TP for this AEP
+        node = self._exp_node_combo.currentText() or None
+        crit = self._compute_critical(aep, node, scen) if aep else None
+        rep_tp = crit['rep_tp'] if crit else None
+        self._extra_tp_combo.blockSignals(True); self._extra_tp_combo.clear()
+        for e in sorted(entries, key=lambda x: x['parsed'][3]):
+            tp_num = e['parsed'][3]
+            label  = f"TP{tp_num}" + (" ★" if tp_num == rep_tp else "")
+            self._extra_tp_combo.addItem(label, tp_num)
+        self._extra_tp_combo.blockSignals(False)
+
+    def _add_extra_event(self):
+        scen    = self._exp_scenario()
+        aep     = self._extra_aep_combo.currentText()
+        dur_min = self._extra_dur_combo.currentData()
+        tp_num  = self._extra_tp_combo.currentData()
+        dur_lbl = self._extra_dur_combo.currentText()
+        if not aep or dur_min is None or tp_num is None: return
+        # Find matching entry
+        entry = next(
+            (e for e in self._entries_for_aep(aep, scen)
+             if e['parsed'][2] == dur_min and e['parsed'][3] == tp_num),
+            None)
+        if entry is None:
+            QMessageBox.warning(self, "Extra Events", "No matching file found."); return
+        # Avoid duplicates
+        for row_data in self._exp_extra_rows:
+            if row_data[:4] == (aep, dur_lbl, dur_min, tp_num): return
+        self._exp_extra_rows.append((aep, dur_lbl, dur_min, tp_num, entry))
+        row = self._exp_extra_table.rowCount()
+        self._exp_extra_table.insertRow(row)
+        self._exp_extra_table.setItem(row, 0, QTableWidgetItem(aep))
+        self._exp_extra_table.setItem(row, 1, QTableWidgetItem(dur_lbl))
+        tp_it = QTableWidgetItem(f"TP{tp_num}"); tp_it.setTextAlignment(Qt.AlignCenter)
+        self._exp_extra_table.setItem(row, 2, tp_it)
+        self._refresh_preview()
+
+    def _remove_extra_event(self):
+        rows = sorted(
+            set(i.row() for i in self._exp_extra_table.selectedItems()),
+            reverse=True)
+        for r in rows:
+            self._exp_extra_table.removeRow(r)
+            if r < len(self._exp_extra_rows):
+                self._exp_extra_rows.pop(r)
+        self._refresh_preview()
+
+    def _get_export_events(self):
+        """Return list of (source, aep, dur_label, tp_num, entry)."""
+        events = []
+        # Critical events (checked rows)
+        for row in range(self._exp_crit_table.rowCount()):
+            it = self._exp_crit_table.item(row, 0)
+            if not it or it.checkState() != Qt.Checked: continue
+            data = it.data(Qt.UserRole)
+            if not data: continue
+            events.append(("Critical ★", data['aep'], data['crit_dur'],
+                           data['rep_tp'], data['rep_entry']))
+        # Extra events
+        for aep, dur_label, dur_min, tp_num, entry in self._exp_extra_rows:
+            events.append(("Extra", aep, dur_label, tp_num, entry))
+        return events
+
+    def _entry_stem(self, entry):
+        raw = os.path.splitext(entry['fname'])[0]
+        m   = re.search(r'aep\d', raw, re.IGNORECASE)
+        return raw[m.start():] if m else raw
+
+    def _refresh_preview(self):
+        self._exp_preview_table.setRowCount(0)
+        for source, aep, dur_label, tp_num, entry in self._get_export_events():
+            stem = self._entry_stem(entry) if entry else "—"
+            row  = self._exp_preview_table.rowCount()
+            self._exp_preview_table.insertRow(row)
+            src_it = QTableWidgetItem(source)
+            src_it.setForeground(
+                QColor('#2563eb') if source.startswith("C") else QColor('#ea580c'))
+            self._exp_preview_table.setItem(row, 0, src_it)
+            self._exp_preview_table.setItem(row, 1, QTableWidgetItem(aep))
+            self._exp_preview_table.setItem(row, 2, QTableWidgetItem(dur_label))
+            tp_it = QTableWidgetItem(f"TP{tp_num}")
+            tp_it.setTextAlignment(Qt.AlignCenter)
+            self._exp_preview_table.setItem(row, 3, tp_it)
+            stem_it = QTableWidgetItem(stem)
+            stem_it.setForeground(QColor('#6b7280'))
+            self._exp_preview_table.setItem(row, 4, stem_it)
 
     # ── Scenario management ───────────────────────────────────────────────────
 
@@ -780,13 +921,12 @@ class RorbResultsDialog(QDialog):
 
     def _on_exp_scen_changed(self):
         self._refresh_export_combos()
-        self._refresh_export_tps()
-        self._refresh_export_info()
 
     def _on_rep_method_changed(self):
         self._populate_critical_table()
         self._replot()
-        self._refresh_export_info()
+        self._refresh_exp_crit_table()
+        self._refresh_preview()
 
     def _on_scenario_changed(self):
         self._active = self._scen_combo.currentText() or None
@@ -827,27 +967,16 @@ class RorbResultsDialog(QDialog):
         if aeps:
             self._populate_critical_table()
             self._refresh_viewer()
-            self._refresh_export_info()
 
     def _refresh_export_combos(self):
-        """Refresh node combo and AEP checkboxes in the export tab."""
-        scen = self._exp_scenario()
+        scen  = self._exp_scenario()
         nodes = self._all_nodes(scen)
         self._exp_node_combo.blockSignals(True); self._exp_node_combo.clear()
         for n in nodes: self._exp_node_combo.addItem(n)
         self._exp_node_combo.blockSignals(False)
-
-        # AEP checkboxes
-        while self._exp_aep_grid.count():
-            item = self._exp_aep_grid.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
-        self._exp_aep_chks.clear()
-        for aep in self._all_aeps(scen):
-            cb = QCheckBox(aep); cb.setChecked(True)
-            self._exp_aep_chks[aep] = cb
-            self._exp_aep_grid.addWidget(cb)
-        self._exp_aep_grid.addStretch()
-        self._refresh_export_tps()
+        self._refresh_exp_crit_table()
+        self._refresh_extra_aep()
+        self._refresh_preview()
 
     def _refresh_compare_combos(self):
         names = list(self._scenarios.keys())
@@ -1051,97 +1180,50 @@ class RorbResultsDialog(QDialog):
 
     # ── Export ────────────────────────────────────────────────────────────────
 
-    def _refresh_export_info(self):
-        scen = self._exp_scenario()
-        node = self._exp_node_combo.currentText() or None
-        aeps = self._all_aeps(scen)
-        if not aeps: self._exp_info.setText("No data loaded."); return
-        lines = [f"Scenario: {scen or '—'}  |  "
-                 f"Rep TP method: {self._rep_method.currentText()}", ""]
-        for aep in aeps:
-            crit = self._compute_critical(aep, node, scen)
-            if not crit: continue
-            tick = "✔" if self._exp_aep_chks.get(aep, None) and \
-                          self._exp_aep_chks[aep].isChecked() else " "
-            lines.append(
-                f"  [{tick}] {aep:<14}  crit: {crit['crit_dur']:<12}  "
-                f"rep TP{crit['rep_tp']}  "
-                f"mean pk: {crit['mean_peak']:.3f}  "
-                f"rep pk: {crit['rep_peak']:.3f} m³/s")
-        self._exp_info.setText("\n".join(lines))
-
-    def _selected_export_aeps(self):
-        return [aep for aep, cb in self._exp_aep_chks.items() if cb.isChecked()]
-
-    def _selected_export_tps(self):
-        return [tp for tp, cb in self._exp_tp_chks.items() if cb.isChecked()]
-
     def _export_hydros(self):
         folder = self._exp_folder_edit.text().strip()
         if not folder:
             QMessageBox.warning(self, "Export", "Select an output folder first."); return
-        scen = self._exp_scenario()
-        node = self._exp_node_combo.currentText() or None
-        aeps = self._selected_export_aeps()
-        tps  = self._selected_export_tps()
-        if not aeps: QMessageBox.warning(self, "Export", "Select at least one AEP."); return
-        if not tps:  QMessageBox.warning(self, "Export", "Select at least one TP."); return
-        saved, skipped = [], []
-        for aep in aeps:
-            crit = self._compute_critical(aep, node, scen)
-            if not crit: skipped.append(aep); continue
-            tp_map = {tp: e for tp, _, e in crit['crit_tps']}
-            for tp_num in tps:
-                e = tp_map.get(tp_num)
-                if e is None: continue
-                q = self._get_hydro(e, node)
-                t = e.get('time', [])[:len(q)] if q is not None else []
-                if q is None: continue
-                raw  = os.path.splitext(e['fname'])[0]
-                m    = re.search(r'aep\d', raw, re.IGNORECASE)
-                stem = raw[m.start():] if m else raw
-                fname = os.path.join(folder, f"{stem}_hydro.csv")
-                with open(fname, 'w', newline='') as f:
-                    w = csv_mod.writer(f)
-                    w.writerow(["Time (hr)", "Flow (cms)"])
-                    for tv, qv in zip(t, q):
-                        w.writerow([f"{tv:.4f}", f"{float(qv):.6f}"])
-                saved.append(os.path.basename(fname))
-        msg = f"Exported {len(saved)} hydrograph CSV(s) to:\n{folder}"
-        if skipped: msg += f"\n\nSkipped: {', '.join(skipped)}"
-        QMessageBox.information(self, "Export Hydrographs", msg)
+        node   = self._exp_node_combo.currentText() or None
+        events = self._get_export_events()
+        if not events:
+            QMessageBox.warning(self, "Export", "No events selected."); return
+        saved = []
+        for _, aep, dur_label, tp_num, entry in events:
+            q = self._get_hydro(entry, node)
+            t = entry.get('time', [])[:len(q)] if q is not None else []
+            if q is None: continue
+            stem  = self._entry_stem(entry)
+            fname = os.path.join(folder, f"{stem}_hydro.csv")
+            with open(fname, 'w', newline='') as f:
+                w = csv_mod.writer(f)
+                w.writerow(["Time (hr)", "Flow (cms)"])
+                for tv, qv in zip(t, q):
+                    w.writerow([f"{tv:.4f}", f"{float(qv):.6f}"])
+            saved.append(os.path.basename(fname))
+        QMessageBox.information(self, "Export Hydrographs",
+                                f"Exported {len(saved)} file(s) to:\n{folder}")
 
     def _export_hyetos(self):
         folder = self._exp_folder_edit.text().strip()
         if not folder:
             QMessageBox.warning(self, "Export", "Select an output folder first."); return
-        scen = self._exp_scenario()
-        node = self._exp_node_combo.currentText() or None
-        aeps = self._selected_export_aeps()
-        tps  = self._selected_export_tps()
-        if not aeps: QMessageBox.warning(self, "Export", "Select at least one AEP."); return
-        if not tps:  QMessageBox.warning(self, "Export", "Select at least one TP."); return
+        events = self._get_export_events()
+        if not events:
+            QMessageBox.warning(self, "Export", "No events selected."); return
         saved, skipped = [], []
-        for aep in aeps:
-            crit = self._compute_critical(aep, node, scen)
-            if not crit: skipped.append(aep); continue
-            tp_map = {tp: e for tp, _, e in crit['crit_tps']}
-            for tp_num in tps:
-                e = tp_map.get(tp_num)
-                if e is None: continue
-                rain_t  = e.get('rain_t',  [])
-                rain_mm = e.get('rain_mm', [])
-                if not rain_mm: continue
-                raw  = os.path.splitext(e['fname'])[0]
-                m    = re.search(r'aep\d', raw, re.IGNORECASE)
-                stem = raw[m.start():] if m else raw
-                fname = os.path.join(folder, f"{stem}_rf.csv")
-                with open(fname, 'w', newline='') as f:
-                    w = csv_mod.writer(f)
-                    w.writerow(["Time (hr)", "Rainfall (mm)"])
-                    for tv, rv in zip(rain_t, rain_mm):
-                        w.writerow([f"{tv:.4f}", f"{rv:.4f}"])
-                saved.append(os.path.basename(fname))
-        msg = f"Exported {len(saved)} hyetograph CSV(s) to:\n{folder}"
-        if skipped: msg += f"\n\nSkipped (no data): {', '.join(skipped)}"
+        for _, aep, dur_label, tp_num, entry in events:
+            rain_t  = entry.get('rain_t',  [])
+            rain_mm = entry.get('rain_mm', [])
+            if not rain_mm: skipped.append(f"{aep} TP{tp_num}"); continue
+            stem  = self._entry_stem(entry)
+            fname = os.path.join(folder, f"{stem}_rf.csv")
+            with open(fname, 'w', newline='') as f:
+                w = csv_mod.writer(f)
+                w.writerow(["Time (hr)", "Rainfall (mm)"])
+                for tv, rv in zip(rain_t, rain_mm):
+                    w.writerow([f"{tv:.4f}", f"{rv:.4f}"])
+            saved.append(os.path.basename(fname))
+        msg = f"Exported {len(saved)} file(s) to:\n{folder}"
+        if skipped: msg += f"\n\nNo rainfall data: {', '.join(skipped)}"
         QMessageBox.information(self, "Export Hyetographs", msg)
