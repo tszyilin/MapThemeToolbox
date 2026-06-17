@@ -6,7 +6,9 @@ Toolbar buttons:
   2. Modify Theme Layers       (icon_modify.png   — orange layers)
   3. Repair Unavailable Layers (icon_repair.png   — crosshair scope)
   4. Theme Presenter           (icon_present.png  — green screen/play)
-  5. Auto-Save                 (QGIS save icon    — green=on, grey=off)
+  5. Sync Setup                (icon_sync.png     — opens full dialog)
+  6. Quick Sync                (icon_sync_on/off  — green=ready, grey=not connected)
+  7. Auto-Save                 (QGIS save icon    — green=on, grey=off)
 """
 
 import os
@@ -17,6 +19,7 @@ from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject
 
 from .processing_provider import MapThemeToolboxProvider
+from .sync_state import REGISTRY
 from .autosave_manager import AutoSaveManager
 
 MENU = "&Map Theme Toolbox"
@@ -29,9 +32,10 @@ class MapThemeToolbox:
         self.actions  = []
         self.toolbar  = self.iface.addToolBar("Map Theme Toolbox")
         self.toolbar.setObjectName("MapThemeToolboxToolbar")
-        self._present_dock    = None   # ThemePresenterDock instance
-        self._autosave        = None   # AutoSaveManager instance
-        self._autosave_action = None
+        self._quick_sync_action = None
+        self._present_dock      = None   # ThemePresenterDock instance
+        self._autosave          = None   # AutoSaveManager instance
+        self._autosave_action   = None
 
     def _icon(self, name):
         path = os.path.join(os.path.dirname(__file__), name)
@@ -97,6 +101,27 @@ class MapThemeToolbox:
         self._add_action("icon_present.png", "Theme Presenter",
                          self.run_present,
                          "Apply any map theme with a single click")
+        self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
+                         self.run_sync, "Open the sync connection setup dialog")
+
+        # ── Quick Sync button — green when connected, grey otherwise ──────────
+        self._quick_sync_action = QAction(
+            self._icon("icon_sync_off.png"),
+            "Quick Sync  (not connected)",
+            self.iface.mainWindow()
+        )
+        self._quick_sync_action.setToolTip(
+            "Quick Sync: no connection set up yet.\nClick 'Sync Setup' first to connect a file."
+        )
+        self._quick_sync_action.setEnabled(False)
+        self._quick_sync_action.triggered.connect(self.run_quick_sync)
+        self.toolbar.addAction(self._quick_sync_action)
+        self.iface.addPluginToMenu(MENU, self._quick_sync_action)
+        self.actions.append(self._quick_sync_action)
+
+        # Register for state-change callbacks
+        REGISTRY.register_callback(self._on_connection_changed)
+        self._on_connection_changed()
 
         # ── Auto-Save button ─────────────────────────────────────────────────
         self.toolbar.addSeparator()
@@ -120,6 +145,7 @@ class MapThemeToolbox:
             QTimer.singleShot(800, self.run_autosave)
 
     def unload(self):
+        REGISTRY.unregister_callback(self._on_connection_changed)
         if self._autosave:
             self._autosave.stop()
         for act in self.actions:
@@ -132,6 +158,36 @@ class MapThemeToolbox:
             self.iface.removeDockWidget(self._present_dock)
             self._present_dock.deleteLater()
             self._present_dock = None
+
+    # ── Connection state callback ─────────────────────────────────────────────
+
+    def _on_connection_changed(self):
+        if self._quick_sync_action is None:
+            return
+        connected = REGISTRY.connected_list()
+        if connected:
+            self._quick_sync_action.setIcon(self._icon("icon_sync_on.png"))
+            if len(connected) == 1:
+                label = connected[0].name
+                tip   = (f"Quick Sync — click to push data now\n"
+                         f"Connection: {connected[0].name}\n"
+                         f"File:  {os.path.basename(connected[0].file_path or '')}\n"
+                         f"Layer: {connected[0].layer_name}")
+            else:
+                label = f"{len(connected)} connected"
+                tip   = "Quick Sync — will sync all connected connections:\n" + \
+                        "\n".join(f"  • {c.name}" for c in connected)
+            self._quick_sync_action.setText(f"Quick Sync  ✔ {label}")
+            self._quick_sync_action.setToolTip(tip)
+            self._quick_sync_action.setEnabled(True)
+        else:
+            self._quick_sync_action.setIcon(self._icon("icon_sync_off.png"))
+            self._quick_sync_action.setText("Quick Sync  (not connected)")
+            self._quick_sync_action.setToolTip(
+                "Quick Sync: no connections set up yet.\n"
+                "Click 'Sync Setup' first to connect a file."
+            )
+            self._quick_sync_action.setEnabled(False)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -161,8 +217,6 @@ class MapThemeToolbox:
         names = dlg.names_to_create()
         if not names: return
 
-        # Save current layer visibility, turn everything off, capture the
-        # all-hidden state, then restore so the canvas is unchanged.
         all_nodes = root.findLayers()
         saved = {node.layerId(): node.itemVisibilityChecked() for node in all_nodes}
         for node in all_nodes:
@@ -284,13 +338,19 @@ class MapThemeToolbox:
         if self._present_dock is None:
             self._present_dock = ThemePresenterDock(self.iface, parent=self.iface.mainWindow())
             self.iface.addDockWidget(Qt.RightDockWidgetArea, self._present_dock)
-            return   # already visible after addDockWidget — skip the toggle
-        # Subsequent clicks: toggle visibility
+            return
         if self._present_dock.isVisible():
             self._present_dock.hide()
         else:
             self._present_dock.show()
             self._present_dock.raise_()
+
+    # ── 5. Sync setup (full dialog) ───────────────────────────────────────────
+
+    def run_sync(self):
+        from .dialog_sync_table import SyncTableDialog
+        dlg = SyncTableDialog(self.iface, parent=self.iface.mainWindow())
+        dlg.exec_()
 
     # ── Auto-Save state callback ──────────────────────────────────────────────
 
@@ -313,9 +373,33 @@ class MapThemeToolbox:
                 "Auto-Save is OFF — click to configure."
             )
 
-    # ── 5. Auto-Save ─────────────────────────────────────────────────────────
+    # ── 6. Auto-Save ─────────────────────────────────────────────────────────
 
     def run_autosave(self):
         from .dialog_autosave import AutoSaveDialog
         dlg = AutoSaveDialog(self._autosave, parent=self.iface.mainWindow())
         dlg.exec_()
+
+    # ── Quick Sync (one-click, toolbar only) ─────────────────────────────────
+
+    def run_quick_sync(self):
+        connected = REGISTRY.connected_list()
+        if not connected:
+            QMessageBox.information(self.iface.mainWindow(), "Not Connected",
+                "No connections set up yet.\nClick 'Sync Setup' to connect a file first.")
+            return
+
+        from .dialog_sync_table import perform_sync
+        results = []
+        all_ok  = True
+        for conn in connected:
+            success, msg = perform_sync(conn, self.iface)
+            results.append(f"{conn.name}: {msg}")
+            if not success:
+                all_ok = False
+
+        summary = "  |  ".join(results)
+        if all_ok:
+            self.iface.messageBar().pushSuccess("Quick Sync", summary)
+        else:
+            self.iface.messageBar().pushWarning("Quick Sync (some errors)", summary)
