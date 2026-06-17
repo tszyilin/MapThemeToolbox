@@ -1,9 +1,9 @@
 <?xml version = '1.0' encoding = 'UTF-8'?>
 <plugins>
-  <pyqgis_plugin name="MapThemeToolbox" version="3.2">
-    <description>Map Theme toolbox: Create, Modify, Repair, Present themes and Auto-Save</description>
-    <about>A combined toolbar for managing QGIS Map Themes: create themes from current canvas state, modify mutual layer visibility across themes, repair broken layer paths, present themes with a single click, and auto-save the project on a timer.</about>
-    <version>3.2</version>
+  <pyqgis_plugin name="MapThemeToolbox" version="3.3">
+    <description>Map Theme toolbox: Modify, Repair, Present themes, Sync and Auto-Save</description>
+    <about>A combined toolbar for managing QGIS Map Themes: modify mutual layer visibility across themes, repair broken layer paths, present themes with a single click, sync with Excel/CSV/GeoPackage, and auto-save the project on a timer.</about>
+    <version>3.3</version>
     <qgis_minimum_version>3.22</qgis_minimum_version>
     <homepage>https://github.com/tszyilin/MapThemeToolbox</homepage>
     <file_name>MapThemeToolbox.zip</file_name>
