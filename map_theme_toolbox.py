@@ -2,16 +2,11 @@
 """
 Map Theme Toolbox — combined plugin
 Toolbar buttons:
-  1. Delete Map Themes         (icon_delete.png   — red trash)
-  2. Export Themes to CSV      (icon_export.png   — green arrow)
-  3. Rename Map Themes         (icon_rename.png   — blue pencil)
-  4. Create New Themes         (icon_create.png   — teal +)
-  5. Modify Theme Layers       (icon_modify.png   — orange layers)
-  6. Repair Unavailable Layers (icon_repair.png   — crosshair scope)
-  7. Theme Presenter           (icon_present.png  — green screen/play)
-  8. Sync Setup                (icon_sync.png     — opens full dialog)
-  9. Quick Sync                (icon_sync_on/off  — green=ready, grey=not connected)
- 10. Auto-Save                 (QGIS save icon    — green=on, grey=off)
+  1. Create New Themes         (icon_create.png   — teal +)
+  2. Modify Theme Layers       (icon_modify.png   — orange layers)
+  3. Repair Unavailable Layers (icon_repair.png   — crosshair scope)
+  4. Theme Presenter           (icon_present.png  — green screen/play)
+  5. Auto-Save                 (QGIS save icon    — green=on, grey=off)
 """
 
 import os
@@ -22,7 +17,6 @@ from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject
 
 from .processing_provider import MapThemeToolboxProvider
-from .sync_state import REGISTRY
 from .autosave_manager import AutoSaveManager
 
 MENU = "&Map Theme Toolbox"
@@ -35,24 +29,13 @@ class MapThemeToolbox:
         self.actions  = []
         self.toolbar  = self.iface.addToolBar("Map Theme Toolbox")
         self.toolbar.setObjectName("MapThemeToolboxToolbar")
-        self._quick_sync_action = None
-        self._present_dock      = None   # ThemePresenterDock instance
-        self._autosave          = None   # AutoSaveManager instance
-        self._autosave_action   = None
+        self._present_dock    = None   # ThemePresenterDock instance
+        self._autosave        = None   # AutoSaveManager instance
+        self._autosave_action = None
 
     def _icon(self, name):
         path = os.path.join(os.path.dirname(__file__), name)
         return QIcon(path) if os.path.exists(path) else QIcon()
-
-    def _add_action_qgis(self, theme_icon, label, slot, tooltip=""):
-        """Add a toolbar/menu action using a built-in QGIS theme icon."""
-        act = QAction(QgsApplication.getThemeIcon(theme_icon), label, self.iface.mainWindow())
-        act.setToolTip(tooltip or label)
-        act.triggered.connect(slot)
-        self.toolbar.addAction(act)
-        self.iface.addPluginToMenu(MENU, act)
-        self.actions.append(act)
-        return act
 
     def _add_action(self, icon_file, label, slot, tooltip=""):
         act = QAction(self._icon(icon_file), label, self.iface.mainWindow())
@@ -104,12 +87,6 @@ class MapThemeToolbox:
         self.provider = MapThemeToolboxProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
 
-        self._add_action("icon_delete.png", "Delete Map Themes",
-                         self.run_delete, "Select and delete map themes")
-        self._add_action("icon_export.png", "Export Themes to CSV",
-                         self.run_export, "Export all map theme names to a CSV file")
-        self._add_action("icon_rename.png", "Rename Map Themes",
-                         self.run_rename, "Rename themes manually or via CSV import")
         self._add_action("icon_create.png", "Create New Themes",
                          self.run_create, "Create empty themes one-by-one or from a CSV")
         self._add_action("icon_modify.png", "Modify Theme Layers",
@@ -120,29 +97,6 @@ class MapThemeToolbox:
         self._add_action("icon_present.png", "Theme Presenter",
                          self.run_present,
                          "Apply any map theme with a single click")
-        self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
-                         self.run_sync, "Open the sync connection setup dialog")
-
-        # ── Quick Sync button — green when connected, grey otherwise ──────────
-        self._quick_sync_action = QAction(
-            self._icon("icon_sync_off.png"),
-            "Quick Sync  (not connected)",
-            self.iface.mainWindow()
-        )
-        self._quick_sync_action.setToolTip(
-            "Quick Sync: no connection set up yet.\nClick 'Sync Setup' first to connect a file."
-        )
-        self._quick_sync_action.setEnabled(False)
-        self._quick_sync_action.triggered.connect(self.run_quick_sync)
-        self.toolbar.addAction(self._quick_sync_action)
-        self.iface.addPluginToMenu(MENU, self._quick_sync_action)
-        self.actions.append(self._quick_sync_action)
-
-        # Register for state-change callbacks
-        REGISTRY.register_callback(self._on_connection_changed)
-
-        # Sync initial state
-        self._on_connection_changed()
 
         # ── Auto-Save button ─────────────────────────────────────────────────
         self.toolbar.addSeparator()
@@ -166,7 +120,6 @@ class MapThemeToolbox:
             QTimer.singleShot(800, self.run_autosave)
 
     def unload(self):
-        REGISTRY.unregister_callback(self._on_connection_changed)
         if self._autosave:
             self._autosave.stop()
         for act in self.actions:
@@ -179,37 +132,6 @@ class MapThemeToolbox:
             self.iface.removeDockWidget(self._present_dock)
             self._present_dock.deleteLater()
             self._present_dock = None
-
-    # ── Connection state callback ─────────────────────────────────────────────
-
-    def _on_connection_changed(self):
-        """Called whenever any SyncConnection changes."""
-        if self._quick_sync_action is None:
-            return
-        connected = REGISTRY.connected_list()
-        if connected:
-            self._quick_sync_action.setIcon(self._icon("icon_sync_on.png"))
-            if len(connected) == 1:
-                label = connected[0].name
-                tip   = (f"Quick Sync — click to push data now\n"
-                         f"Connection: {connected[0].name}\n"
-                         f"File:  {os.path.basename(connected[0].file_path or '')}\n"
-                         f"Layer: {connected[0].layer_name}")
-            else:
-                label = f"{len(connected)} connected"
-                tip   = "Quick Sync — will sync all connected connections:\n" + \
-                        "\n".join(f"  • {c.name}" for c in connected)
-            self._quick_sync_action.setText(f"Quick Sync  ✔ {label}")
-            self._quick_sync_action.setToolTip(tip)
-            self._quick_sync_action.setEnabled(True)
-        else:
-            self._quick_sync_action.setIcon(self._icon("icon_sync_off.png"))
-            self._quick_sync_action.setText("Quick Sync  (not connected)")
-            self._quick_sync_action.setToolTip(
-                "Quick Sync: no connections set up yet.\n"
-                "Click 'Sync Setup' first to connect a file."
-            )
-            self._quick_sync_action.setEnabled(False)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -225,51 +147,7 @@ class MapThemeToolbox:
             return None, None
         return tc, themes
 
-    # ── 1. Delete ─────────────────────────────────────────────────────────────
-
-    def run_delete(self):
-        from .dialog_delete_themes import DeleteThemesDialog
-        tc, themes = self._require_themes()
-        if themes is None: return
-        dlg = DeleteThemesDialog(themes, parent=self.iface.mainWindow())
-        if dlg.exec_() != dlg.Accepted: return
-        selected = dlg.selected_themes()
-        if not selected:
-            QMessageBox.information(self.iface.mainWindow(), "Nothing Selected", "No themes selected.")
-            return
-        reply = QMessageBox.question(
-            self.iface.mainWindow(), "Confirm Deletion",
-            f"Delete {len(selected)} theme(s)?\n\n" + "\n".join(f"  - {t}" for t in selected),
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            for t in selected:
-                tc.removeMapTheme(t)
-            QMessageBox.information(self.iface.mainWindow(), "Done", f"{len(selected)} theme(s) deleted.")
-
-    # ── 2. Export ─────────────────────────────────────────────────────────────
-
-    def run_export(self):
-        from qgis import processing
-        processing.execAlgorithmDialog("mapthemetoolbox:exportmapthemes", {})
-
-    # ── 3. Rename ─────────────────────────────────────────────────────────────
-
-    def run_rename(self):
-        from .dialog_rename_themes import RenameThemesDialog
-        tc, themes = self._require_themes()
-        if themes is None: return
-        dlg = RenameThemesDialog(themes, parent=self.iface.mainWindow())
-        if dlg.exec_() != dlg.Accepted: return
-        renames = dlg.renames()
-        if not renames: return
-        for old, new in renames.items():
-            record = tc.mapThemeState(old)
-            tc.insert(new, record)
-            tc.removeMapTheme(old)
-        QMessageBox.information(self.iface.mainWindow(), "Done", f"{len(renames)} theme(s) renamed.")
-
-    # ── 4. Create ─────────────────────────────────────────────────────────────
+    # ── 1. Create ─────────────────────────────────────────────────────────────
 
     def run_create(self):
         from .dialog_create_themes import CreateThemesDialog
@@ -305,7 +183,7 @@ class MapThemeToolbox:
         QMessageBox.information(self.iface.mainWindow(), "Done",
                                 f"Themes {' and '.join(parts)} from current canvas state.")
 
-    # ── 5. Modify layers ──────────────────────────────────────────────────────
+    # ── 2. Modify layers ──────────────────────────────────────────────────────
 
     def run_modify(self):
         from .dialog_modify_layers import ThemeSelectDialog, LayerToggleDialog
@@ -392,14 +270,14 @@ class MapThemeToolbox:
         QMessageBox.information(self.iface.mainWindow(), "Done",
                                 f"Updated {len(valid)} theme(s) — " + " and ".join(parts) + ".")
 
-    # ── 6. Repair unavailable layers ─────────────────────────────────────────
+    # ── 3. Repair unavailable layers ─────────────────────────────────────────
 
     def run_repair(self):
         from .dialog_repair_layers import RepairLayersDialog
         dlg = RepairLayersDialog(parent=self.iface.mainWindow())
         dlg.exec_()
 
-    # ── 7. Theme Presenter ────────────────────────────────────────────────────
+    # ── 4. Theme Presenter ────────────────────────────────────────────────────
 
     def run_present(self):
         from .dialog_apply_theme import ThemePresenterDock
@@ -413,13 +291,6 @@ class MapThemeToolbox:
         else:
             self._present_dock.show()
             self._present_dock.raise_()
-
-    # ── 8. Sync setup (full dialog) ───────────────────────────────────────────
-
-    def run_sync(self):
-        from .dialog_sync_table import SyncTableDialog
-        dlg = SyncTableDialog(self.iface, parent=self.iface.mainWindow())
-        dlg.exec_()
 
     # ── Auto-Save state callback ──────────────────────────────────────────────
 
@@ -442,33 +313,9 @@ class MapThemeToolbox:
                 "Auto-Save is OFF — click to configure."
             )
 
-    # ── 10. Auto-Save ─────────────────────────────────────────────────────────
+    # ── 5. Auto-Save ─────────────────────────────────────────────────────────
 
     def run_autosave(self):
         from .dialog_autosave import AutoSaveDialog
         dlg = AutoSaveDialog(self._autosave, parent=self.iface.mainWindow())
         dlg.exec_()
-
-    # ── Quick Sync (one-click, toolbar only) ─────────────────────────────────
-
-    def run_quick_sync(self):
-        connected = REGISTRY.connected_list()
-        if not connected:
-            QMessageBox.information(self.iface.mainWindow(), "Not Connected",
-                "No connections set up yet.\nClick 'Sync Setup' to connect a file first.")
-            return
-
-        from .dialog_sync_table import perform_sync
-        results = []
-        all_ok  = True
-        for conn in connected:
-            success, msg = perform_sync(conn, self.iface)
-            results.append(f"{conn.name}: {msg}")
-            if not success:
-                all_ok = False
-
-        summary = "  |  ".join(results)
-        if all_ok:
-            self.iface.messageBar().pushSuccess("Quick Sync", summary)
-        else:
-            self.iface.messageBar().pushWarning("Quick Sync (some errors)", summary)
