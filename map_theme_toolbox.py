@@ -2,13 +2,12 @@
 """
 Map Theme Toolbox — combined plugin
 Toolbar buttons:
-  1. Create New Themes         (icon_create.png   — teal +)
-  2. Modify Theme Layers       (icon_modify.png   — orange layers)
-  3. Repair Unavailable Layers (icon_repair.png   — crosshair scope)
-  4. Theme Presenter           (icon_present.png  — green screen/play)
-  5. Sync Setup                (icon_sync.png     — opens full dialog)
-  6. Quick Sync                (icon_sync_on/off  — green=ready, grey=not connected)
-  7. Auto-Save                 (QGIS save icon    — green=on, grey=off)
+  1. Modify Theme Layers       (icon_modify.png   — orange layers)
+  2. Repair Unavailable Layers (icon_repair.png   — crosshair scope)
+  3. Theme Presenter           (icon_present.png  — green screen/play)
+  4. Sync Setup                (icon_sync.png     — opens full dialog)
+  5. Quick Sync                (icon_sync_on/off  — green=ready, grey=not connected)
+  6. Auto-Save                 (QGIS save icon    — green=on, grey=off)
 """
 
 import os
@@ -91,8 +90,6 @@ class MapThemeToolbox:
         self.provider = MapThemeToolboxProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
 
-        self._add_action("icon_create.png", "Create New Themes",
-                         self.run_create, "Create empty themes one-by-one or from a CSV")
         self._add_action("icon_modify.png", "Modify Theme Layers",
                          self.run_modify, "Toggle mutual layer visibility across themes")
         self._add_action("icon_repair.png", "Repair Unavailable Layers",
@@ -203,41 +200,7 @@ class MapThemeToolbox:
             return None, None
         return tc, themes
 
-    # ── 1. Create ─────────────────────────────────────────────────────────────
-
-    def run_create(self):
-        from .dialog_create_themes import CreateThemesDialog
-        project = QgsProject.instance()
-        tc = self._tc()
-        existing = tc.mapThemes()
-        root  = project.layerTreeRoot()
-        model = self.iface.layerTreeView().layerTreeModel()
-        dlg = CreateThemesDialog(existing, parent=self.iface.mainWindow())
-        if dlg.exec_() != dlg.Accepted: return
-        names = dlg.names_to_create()
-        if not names: return
-
-        all_nodes = root.findLayers()
-        saved = {node.layerId(): node.itemVisibilityChecked() for node in all_nodes}
-        for node in all_nodes:
-            node.setItemVisibilityChecked(False)
-        state = tc.createThemeFromCurrentState(root, model)
-        for node in all_nodes:
-            node.setItemVisibilityChecked(saved.get(node.layerId(), True))
-
-        created = overwritten = 0
-        for name in names:
-            if name in tc.mapThemes():
-                tc.update(name, state); overwritten += 1
-            else:
-                tc.insert(name, state); created += 1
-        parts = []
-        if created:     parts.append(f"{created} created")
-        if overwritten: parts.append(f"{overwritten} overwritten")
-        QMessageBox.information(self.iface.mainWindow(), "Done",
-                                f"Themes {' and '.join(parts)} from current canvas state.")
-
-    # ── 2. Modify layers ──────────────────────────────────────────────────────
+    # ── 1. Modify layers ──────────────────────────────────────────────────────
 
     def run_modify(self):
         from .dialog_modify_layers import ThemeSelectDialog, LayerToggleDialog
