@@ -1,0 +1,12 @@
+[general]
+name=ThemeAndAltasToolbox
+qgisMinimumVersion=4.0
+description=Map Theme toolbox: Modify, Repair, Present themes, Sync and Auto-Save
+version=4.0
+author=Safin
+email=
+about=A combined toolbar for managing QGIS Map Themes: modify mutual layer visibility across themes, repair broken layer paths, present themes with a single click, sync with Excel/CSV/GeoPackage, and auto-save the project on a timer.
+category=Plugins
+icon=icon_toolbox.png
+experimental=False
+deprecated=False

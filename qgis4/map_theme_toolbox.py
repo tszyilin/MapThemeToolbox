@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Map Theme Toolbox — combined plugin  (QGIS 3.22+ and QGIS 4.x)
+Map Theme Toolbox — combined plugin  (QGIS 4 / PyQt6)
 Toolbar buttons:
-  1. Modify Theme Layers       (icon_modify.png)
-  2. Repair Unavailable Layers (icon_repair.png)
-  3. Theme Presenter           (icon_present.png)
-  4. Sync Setup                (icon_sync.png)
-  5. Quick Sync                (icon_sync_on/off)
-  6. Auto-Save                 (clock icon)
+  1. Modify Theme Layers       (icon_modify.png   — orange layers)
+  2. Repair Unavailable Layers (icon_repair.png   — crosshair scope)
+  3. Theme Presenter           (icon_present.png  — green screen/play)
+  4. Sync Setup                (icon_sync.png     — opens full dialog)
+  5. Quick Sync                (icon_sync_on/off  — green=ready, grey=not connected)
+  6. Auto-Save                 (QGIS save icon    — green=on, grey=off)
 """
 
 import os
@@ -17,10 +17,6 @@ from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject
 
-from .compat import (
-    Transparent, NoBrush, NoPen, SolidLine, RoundCap,
-    Antialiasing, RightDock, Button_Yes, Button_No, Accepted,
-)
 from .processing_provider import MapThemeToolboxProvider
 from .sync_state import REGISTRY
 from .autosave_manager import AutoSaveManager
@@ -36,8 +32,8 @@ class MapThemeToolbox:
         self.toolbar  = self.iface.addToolBar("Map Theme Toolbox")
         self.toolbar.setObjectName("MapThemeToolboxToolbar")
         self._quick_sync_action = None
-        self._present_dock      = None
-        self._autosave          = None
+        self._present_dock      = None   # ThemePresenterDock instance
+        self._autosave          = None   # AutoSaveManager instance
         self._autosave_action   = None
 
     def _icon(self, name):
@@ -54,32 +50,39 @@ class MapThemeToolbox:
         return act
 
     def _make_autosave_icon(self, enabled):
+        """Paint a clock icon: green when auto-save is on, grey when off."""
         SIZE = 20
         pix  = QPixmap(SIZE, SIZE)
-        pix.fill(Transparent)
+        pix.fill(Qt.GlobalColor.transparent)
 
-        p = QPainter(pix)
-        p.setRenderHint(Antialiasing)
+        p   = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         col = QColor("#27ae60") if enabled else QColor("#95a5a6")
         cx = cy = SIZE / 2.0
         r  = SIZE / 2.0 - 1.5
 
+        # Outer ring
         p.setPen(QPen(col, 1.8))
-        p.setBrush(NoBrush)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QPointF(cx, cy), r, r)
 
-        pen = QPen(col, 1.8, SolidLine, RoundCap)
+        # Clock hands (10:10 position — symmetrical, looks like a smile)
+        pen = QPen(col, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
-        ah = math.radians(-60)
+        # Hour hand → 10 o'clock
+        ah = math.radians(-60)   # 300° from top = 10 o'clock
         p.drawLine(QPointF(cx, cy),
                    QPointF(cx + r * 0.50 * math.sin(ah),
                             cy - r * 0.50 * math.cos(ah)))
+        # Minute hand → 12 o'clock (straight up)
         p.drawLine(QPointF(cx, cy), QPointF(cx, cy - r * 0.75))
 
-        p.setPen(NoPen)
+        # Centre dot
+        p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QBrush(col))
         p.drawEllipse(QPointF(cx, cy), 1.5, 1.5)
+
         p.end()
         return QIcon(pix)
 
@@ -93,10 +96,12 @@ class MapThemeToolbox:
                          self.run_repair,
                          "Batch re-link broken layer paths after moving project files")
         self._add_action("icon_present.png", "Theme Presenter",
-                         self.run_present, "Apply any map theme with a single click")
+                         self.run_present,
+                         "Apply any map theme with a single click")
         self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
                          self.run_sync, "Open the sync connection setup dialog")
 
+        # ── Quick Sync button — green when connected, grey otherwise ──────────
         self._quick_sync_action = QAction(
             self._icon("icon_sync_off.png"),
             "Quick Sync  (not connected)",
@@ -111,9 +116,11 @@ class MapThemeToolbox:
         self.iface.addPluginToMenu(MENU, self._quick_sync_action)
         self.actions.append(self._quick_sync_action)
 
+        # Register for state-change callbacks
         REGISTRY.register_callback(self._on_connection_changed)
         self._on_connection_changed()
 
+        # ── Auto-Save button ─────────────────────────────────────────────────
         self.toolbar.addSeparator()
         self._autosave = AutoSaveManager(self.iface)
         self._autosave_action = QAction(
@@ -128,8 +135,9 @@ class MapThemeToolbox:
         self.actions.append(self._autosave_action)
 
         self._autosave.register_callback(self._on_autosave_changed)
-        self._on_autosave_changed()
+        self._on_autosave_changed()   # reflect saved state on startup
 
+        # ── Optionally show Auto-Save dialog on QGIS startup ─────────────────
         if self._autosave.show_on_start:
             QTimer.singleShot(800, self.run_autosave)
 
@@ -147,6 +155,8 @@ class MapThemeToolbox:
             self.iface.removeDockWidget(self._present_dock)
             self._present_dock.deleteLater()
             self._present_dock = None
+
+    # ── Connection state callback ─────────────────────────────────────────────
 
     def _on_connection_changed(self):
         if self._quick_sync_action is None:
@@ -176,6 +186,8 @@ class MapThemeToolbox:
             )
             self._quick_sync_action.setEnabled(False)
 
+    # ── helpers ───────────────────────────────────────────────────────────────
+
     def _tc(self):
         return QgsProject.instance().mapThemeCollection()
 
@@ -188,6 +200,8 @@ class MapThemeToolbox:
             return None, None
         return tc, themes
 
+    # ── 1. Modify layers ──────────────────────────────────────────────────────
+
     def run_modify(self):
         from .dialog_modify_layers import ThemeSelectDialog, LayerToggleDialog
         tc, all_themes = self._require_themes()
@@ -196,7 +210,7 @@ class MapThemeToolbox:
         root  = project.layerTreeRoot()
         model = self.iface.layerTreeView().layerTreeModel()
         dlg1 = ThemeSelectDialog(all_themes, parent=self.iface.mainWindow())
-        if dlg1.exec() != Accepted: return
+        if dlg1.exec() != QDialog.DialogCode.Accepted: return
         selected = dlg1.selected_themes()
         if not selected:
             QMessageBox.information(self.iface.mainWindow(), "Nothing Selected",
@@ -237,7 +251,7 @@ class MapThemeToolbox:
                                     "No layers are visible in ALL selected themes.\n"
                                     "You can still add layers manually in the next step.")
         dlg2 = LayerToggleDialog(common, valid, all_layer_names, parent=self.iface.mainWindow())
-        if dlg2.exec() != Accepted: return
+        if dlg2.exec() != QDialog.DialogCode.Accepted: return
         to_hide = dlg2.layers_to_hide()
         to_show = [l for l in dlg2.layers_to_show() if l not in common]
         if not to_hide and not to_show:
@@ -249,9 +263,10 @@ class MapThemeToolbox:
         reply = QMessageBox.question(
             self.iface.mainWindow(), "Confirm Update",
             f"Apply to {len(valid)} theme(s):\n\n" + "\n".join(lines),
-            Button_Yes | Button_No, Button_No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
-        if reply != Button_Yes: return
+        if reply != QMessageBox.StandardButton.Yes: return
         tmp2 = save_state()
         try:
             for t in valid:
@@ -273,15 +288,20 @@ class MapThemeToolbox:
         QMessageBox.information(self.iface.mainWindow(), "Done",
                                 f"Updated {len(valid)} theme(s) — " + " and ".join(parts) + ".")
 
+    # ── 3. Repair unavailable layers ─────────────────────────────────────────
+
     def run_repair(self):
         from .dialog_repair_layers import RepairLayersDialog
-        RepairLayersDialog(parent=self.iface.mainWindow()).exec()
+        dlg = RepairLayersDialog(parent=self.iface.mainWindow())
+        dlg.exec()
+
+    # ── 4. Theme Presenter ────────────────────────────────────────────────────
 
     def run_present(self):
         from .dialog_apply_theme import ThemePresenterDock
         if self._present_dock is None:
             self._present_dock = ThemePresenterDock(self.iface, parent=self.iface.mainWindow())
-            self.iface.addDockWidget(RightDock, self._present_dock)
+            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._present_dock)
             return
         if self._present_dock.isVisible():
             self._present_dock.hide()
@@ -289,9 +309,14 @@ class MapThemeToolbox:
             self._present_dock.show()
             self._present_dock.raise_()
 
+    # ── 5. Sync setup (full dialog) ───────────────────────────────────────────
+
     def run_sync(self):
         from .dialog_sync_table import SyncTableDialog
-        SyncTableDialog(self.iface, parent=self.iface.mainWindow()).exec()
+        dlg = SyncTableDialog(self.iface, parent=self.iface.mainWindow())
+        dlg.exec()
+
+    # ── Auto-Save state callback ──────────────────────────────────────────────
 
     def _on_autosave_changed(self):
         if self._autosave_action is None or self._autosave is None:
@@ -303,14 +328,23 @@ class MapThemeToolbox:
             mins, secs = divmod(ivl, 60)
             label = f"{mins}m {secs:02d}s" if mins else f"{secs}s"
             self._autosave_action.setText(f"Auto-Save  ✔ {label}")
-            self._autosave_action.setToolTip(f"Auto-Save: ON — every {label}\nClick to configure.")
+            self._autosave_action.setToolTip(
+                f"Auto-Save: ON — every {label}\nClick to configure."
+            )
         else:
             self._autosave_action.setText("Auto-Save  (off)")
-            self._autosave_action.setToolTip("Auto-Save is OFF — click to configure.")
+            self._autosave_action.setToolTip(
+                "Auto-Save is OFF — click to configure."
+            )
+
+    # ── 6. Auto-Save ─────────────────────────────────────────────────────────
 
     def run_autosave(self):
         from .dialog_autosave import AutoSaveDialog
-        AutoSaveDialog(self._autosave, parent=self.iface.mainWindow()).exec()
+        dlg = AutoSaveDialog(self._autosave, parent=self.iface.mainWindow())
+        dlg.exec()
+
+    # ── Quick Sync (one-click, toolbar only) ─────────────────────────────────
 
     def run_quick_sync(self):
         connected = REGISTRY.connected_list()
@@ -318,6 +352,7 @@ class MapThemeToolbox:
             QMessageBox.information(self.iface.mainWindow(), "Not Connected",
                 "No connections set up yet.\nClick 'Sync Setup' to connect a file first.")
             return
+
         from .dialog_sync_table import perform_sync
         results = []
         all_ok  = True
@@ -326,6 +361,7 @@ class MapThemeToolbox:
             results.append(f"{conn.name}: {msg}")
             if not success:
                 all_ok = False
+
         summary = "  |  ".join(results)
         if all_ok:
             self.iface.messageBar().pushSuccess("Quick Sync", summary)
