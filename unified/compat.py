@@ -87,7 +87,12 @@ if QT6:
     from qgis.PyQt.QtCore import QMetaType
     from qgis.core import QgsVectorFileWriter as _VFW
     FieldType_String      = QMetaType.Type.QString
-    VFW_NoError           = _VFW.VectorWriterResult.NoError
+    if hasattr(_VFW, 'VectorWriterResult'):
+        VFW_NoError       = _VFW.VectorWriterResult.NoError
+    elif hasattr(_VFW, 'NoError'):
+        VFW_NoError       = _VFW.NoError
+    else:
+        VFW_NoError       = 0
 
 else:  # Qt 5 / PyQt5
     # ── Qt namespace ──────────────────────────────────────────────────────────
