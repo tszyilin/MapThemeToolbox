@@ -35,10 +35,11 @@ class MapThemeToolbox:
         self.actions  = []
         self.toolbar  = self.iface.addToolBar("Map Theme Toolbox")
         self.toolbar.setObjectName("MapThemeToolboxToolbar")
-        self._quick_sync_action = None
-        self._present_dock      = None
-        self._autosave          = None
-        self._autosave_action   = None
+        self._quick_sync_action  = None
+        self._layout_qs_actions  = {}   # id(designer) -> QAction
+        self._present_dock       = None
+        self._autosave           = None
+        self._autosave_action    = None
 
     def _icon(self, name):
         path = os.path.join(os.path.dirname(__file__), name)
@@ -113,6 +114,7 @@ class MapThemeToolbox:
 
         REGISTRY.register_callback(self._on_connection_changed)
         self._on_connection_changed()
+        self.iface.layoutDesignerOpened.connect(self._on_layout_designer_opened)
 
         self.toolbar.addSeparator()
         self._autosave = AutoSaveManager(self.iface)
@@ -134,6 +136,13 @@ class MapThemeToolbox:
             QTimer.singleShot(800, self.run_autosave)
 
     def unload(self):
+        try:
+            self.iface.layoutDesignerOpened.disconnect(self._on_layout_designer_opened)
+        except Exception:
+            pass
+        for act in list(self._layout_qs_actions.values()):
+            act.deleteLater()
+        self._layout_qs_actions.clear()
         REGISTRY.unregister_callback(self._on_connection_changed)
         if self._autosave:
             self._autosave.stop()
@@ -148,12 +157,10 @@ class MapThemeToolbox:
             self._present_dock.deleteLater()
             self._present_dock = None
 
-    def _on_connection_changed(self):
-        if self._quick_sync_action is None:
-            return
+    def _sync_layout_action(self, act):
         connected = REGISTRY.connected_list()
         if connected:
-            self._quick_sync_action.setIcon(self._icon("icon_sync_on.png"))
+            act.setIcon(self._icon("icon_sync_on.png"))
             if len(connected) == 1:
                 label = connected[0].name
                 tip   = (f"Quick Sync — click to push data now\n"
@@ -164,17 +171,40 @@ class MapThemeToolbox:
                 label = f"{len(connected)} connected"
                 tip   = "Quick Sync — will sync all connected connections:\n" + \
                         "\n".join(f"  • {c.name}" for c in connected)
-            self._quick_sync_action.setText(f"Quick Sync  ✔ {label}")
-            self._quick_sync_action.setToolTip(tip)
-            self._quick_sync_action.setEnabled(True)
+            act.setText(f"Quick Sync  ✔ {label}")
+            act.setToolTip(tip)
+            act.setEnabled(True)
         else:
-            self._quick_sync_action.setIcon(self._icon("icon_sync_off.png"))
-            self._quick_sync_action.setText("Quick Sync  (not connected)")
-            self._quick_sync_action.setToolTip(
+            act.setIcon(self._icon("icon_sync_off.png"))
+            act.setText("Quick Sync  (not connected)")
+            act.setToolTip(
                 "Quick Sync: no connections set up yet.\n"
                 "Click 'Sync Setup' first to connect a file."
             )
-            self._quick_sync_action.setEnabled(False)
+            act.setEnabled(False)
+
+    def _on_connection_changed(self):
+        if self._quick_sync_action is None:
+            return
+        self._sync_layout_action(self._quick_sync_action)
+        for act in list(self._layout_qs_actions.values()):
+            self._sync_layout_action(act)
+
+    def _on_layout_designer_opened(self, designer):
+        act = QAction(self._icon("icon_sync_off.png"), "Quick Sync  (not connected)", designer.window())
+        act.setEnabled(False)
+        act.triggered.connect(self.run_quick_sync)
+        designer.actionsToolbar().addAction(act)
+
+        key = id(designer)
+        self._layout_qs_actions[key] = act
+
+        def _cleanup(_obj, _key=key, _act=act):
+            self._layout_qs_actions.pop(_key, None)
+            _act.deleteLater()
+
+        designer.destroyed.connect(_cleanup)
+        self._sync_layout_action(act)
 
     def _tc(self):
         return QgsProject.instance().mapThemeCollection()
