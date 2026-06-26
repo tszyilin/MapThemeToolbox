@@ -115,6 +115,8 @@ class MapThemeToolbox:
         REGISTRY.register_callback(self._on_connection_changed)
         self._on_connection_changed()
         self.iface.layoutDesignerOpened.connect(self._on_layout_designer_opened)
+        for designer in self.iface.openLayoutDesigners():
+            self._inject_layout_qs(designer)
 
         self.toolbar.addSeparator()
         self._autosave = AutoSaveManager(self.iface)
@@ -190,13 +192,15 @@ class MapThemeToolbox:
         for act in list(self._layout_qs_actions.values()):
             self._sync_layout_action(act)
 
-    def _on_layout_designer_opened(self, designer):
+    def _inject_layout_qs(self, designer):
+        key = id(designer)
+        if key in self._layout_qs_actions:
+            return
         act = QAction(self._icon("icon_sync_off.png"), "Quick Sync  (not connected)", designer.window())
         act.setEnabled(False)
         act.triggered.connect(self.run_quick_sync)
-        designer.actionsToolbar().addAction(act)
+        designer.atlasToolbar().addAction(act)
 
-        key = id(designer)
         self._layout_qs_actions[key] = act
 
         def _cleanup(_obj, _key=key, _act=act):
@@ -205,6 +209,9 @@ class MapThemeToolbox:
 
         designer.destroyed.connect(_cleanup)
         self._sync_layout_action(act)
+
+    def _on_layout_designer_opened(self, designer):
+        self._inject_layout_qs(designer)
 
     def _tc(self):
         return QgsProject.instance().mapThemeCollection()
