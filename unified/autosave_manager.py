@@ -22,7 +22,7 @@ class AutoSaveManager:
         self.iface          = iface
         self.last_save      = None   # "HH:MM:SS" string set after each save
         self._enabled       = False
-        self._interval      = 300    # seconds
+        self._interval      = 3600   # seconds (default 60 min)
         self._show_on_start = True   # open dialog when QGIS starts
         self._callbacks     = []
 
@@ -109,7 +109,7 @@ class AutoSaveManager:
     def _load_settings(self):
         s = QgsSettings()
         self._enabled       = s.value(self._KEY_ENABLED,       False, type=bool)
-        self._interval      = s.value(self._KEY_INTERVAL,      300,   type=int)
+        self._interval      = s.value(self._KEY_INTERVAL,      3600,  type=int)
         self._show_on_start = s.value(self._KEY_SHOW_ON_START, True,  type=bool)
 
     def _save_settings(self):

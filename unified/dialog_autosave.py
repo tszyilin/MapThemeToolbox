@@ -35,15 +35,15 @@ class AutoSaveDialog(QDialog):
 
         form = QFormLayout(); form.setContentsMargins(0, 0, 0, 0)
         self._spin = QSpinBox()
-        self._spin.setRange(10, 3600); self._spin.setValue(manager.interval)
+        self._spin.setRange(10, 7200); self._spin.setValue(manager.interval)
         self._spin.setSuffix("  seconds"); self._spin.setMinimumWidth(150)
-        self._spin.setToolTip("Minimum 10 s, maximum 3600 s (1 hour)")
+        self._spin.setToolTip("Minimum 10 s, maximum 7200 s (2 hours)")
         form.addRow("Save every:", self._spin)
         layout.addLayout(form)
 
         preset_row = QHBoxLayout(); preset_row.addWidget(QLabel("Quick:"))
-        for label, secs in [("30 s", 30), ("1 min", 60), ("5 min", 300), ("15 min", 900)]:
-            btn = QPushButton(label); btn.setMaximumWidth(58)
+        for label, secs in [("15 min", 900), ("30 min", 1800), ("60 min", 3600), ("120 min", 7200)]:
+            btn = QPushButton(label); btn.setMaximumWidth(68)
             btn.clicked.connect(lambda _, s=secs: self._spin.setValue(s))
             preset_row.addWidget(btn)
         preset_row.addStretch()
