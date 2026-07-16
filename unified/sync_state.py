@@ -4,12 +4,16 @@ Sync connection state — supports multiple named Excel ↔ GeoPackage connectio
 
 REGISTRY  — module-level ConnectionRegistry singleton.
             Import and use this everywhere instead of the old CONNECTION.
+
+Connections are stored per-project (in the .qgz/.qgs file) so each project
+has its own independent set of sync connections.
 """
 
 import json
-from qgis.core import QgsSettings
+from qgis.core import QgsProject
 
-_SETTINGS_KEY = "MapThemeToolbox/sync/connections_v2"
+_PROJ_SCOPE = "MapThemeToolbox"
+_PROJ_KEY   = "sync_connections_v2"
 
 
 class SyncConnection:
@@ -60,6 +64,8 @@ class ConnectionRegistry:
         self._connections = []
         self._callbacks   = []
         self._load()
+        QgsProject.instance().readProject.connect(self._on_project_read)
+        QgsProject.instance().cleared.connect(self._on_project_cleared)
 
     # ── Connection management ─────────────────────────────────────────────────
 
@@ -92,6 +98,24 @@ class ConnectionRegistry:
     def connected_list(self):
         return [c for c in self._connections if c.connected]
 
+    # ── Project signals ───────────────────────────────────────────────────────
+
+    def _on_project_read(self, _doc=None):
+        self._load()
+        self._notify()
+
+    def _on_project_cleared(self):
+        self._connections = []
+        self._notify()
+
+    def cleanup(self):
+        """Disconnect project signals — call from plugin.unload()."""
+        try:
+            QgsProject.instance().readProject.disconnect(self._on_project_read)
+            QgsProject.instance().cleared.disconnect(self._on_project_cleared)
+        except Exception:
+            pass
+
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
     def register_callback(self, fn):
@@ -111,14 +135,15 @@ class ConnectionRegistry:
     # ── Persistence ───────────────────────────────────────────────────────────
 
     def _save(self):
-        QgsSettings().setValue(
-            _SETTINGS_KEY,
+        QgsProject.instance().writeEntry(
+            _PROJ_SCOPE, _PROJ_KEY,
             json.dumps([c.to_dict() for c in self._connections], ensure_ascii=False)
         )
 
     def _load(self):
-        raw = QgsSettings().value(_SETTINGS_KEY, "")
+        raw, _ = QgsProject.instance().readEntry(_PROJ_SCOPE, _PROJ_KEY, "")
         if not raw:
+            self._connections = []
             return
         try:
             self._connections = [SyncConnection.from_dict(d)

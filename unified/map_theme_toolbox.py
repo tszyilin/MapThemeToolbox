@@ -146,6 +146,7 @@ class MapThemeToolbox:
             act.deleteLater()
         self._layout_qs_actions.clear()
         REGISTRY.unregister_callback(self._on_connection_changed)
+        REGISTRY.cleanup()
         if self._autosave:
             self._autosave.stop()
         for act in self.actions:
