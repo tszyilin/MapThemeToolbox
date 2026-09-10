@@ -12,6 +12,7 @@ from qgis.PyQt.QtWidgets import (
     QLineEdit, QPushButton, QAbstractItemView,
     QInputDialog, QMessageBox,
     QDialog, QDialogButtonBox,
+    QMenu,
 )
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QColor, QFont
@@ -158,6 +159,8 @@ class ThemePresenterDock(QDockWidget):
         self._list.setIndentation(16)
         self._list.itemClicked.connect(self._on_item_clicked)
         self._list.currentItemChanged.connect(self._on_selection_changed)
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._list)
 
         btn_grid = QGridLayout()
@@ -508,6 +511,9 @@ class ThemePresenterDock(QDockWidget):
         name = self._require_theme_selection()
         if not name:
             return
+        self._replace_theme(name)
+
+    def _replace_theme(self, name):
         reply = QMessageBox.question(
             self, "Replace Theme", f"Overwrite <b>{name}</b> with the current canvas state?",
             Button_Yes | Button_No, Button_No
@@ -518,6 +524,32 @@ class ThemePresenterDock(QDockWidget):
         tc.update(name, tc.createThemeFromCurrentState(self._root(), self._model()))
         self._status.setText(f"🔄  Replaced: <b>{name}</b>")
         self._populate()
+
+    def _on_context_menu(self, pos):
+        item = self._list.itemAt(pos)
+        if item is None:
+            return
+        name = item.data(0, UserRole)
+        if not name:
+            return
+        self._list.setCurrentItem(item)
+        menu = QMenu(self._list)
+        act_apply   = menu.addAction("✅  Apply Theme")
+        act_replace = menu.addAction("🔄  Replace with Current Canvas…")
+        menu.addSeparator()
+        act_rename  = menu.addAction("✏️  Rename…")
+        act_delete  = menu.addAction("🗑  Delete…")
+        chosen = menu.exec_(self._list.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen is act_apply:
+            self._on_item_clicked(item, 0)
+        elif chosen is act_replace:
+            self._replace_theme(name)
+        elif chosen is act_rename:
+            self._on_rename()
+        elif chosen is act_delete:
+            self._on_delete()
 
     def _on_delete(self):
         item = self._list.currentItem()
