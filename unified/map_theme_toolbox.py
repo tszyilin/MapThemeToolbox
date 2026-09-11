@@ -12,7 +12,7 @@ Toolbar buttons:
 
 import os
 import math
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QDialog, QApplication
+from qgis.PyQt.QtWidgets import QAction, QMessageBox, QDialog, QApplication, QToolBar
 from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject, QgsLayoutItemMap
@@ -221,58 +221,81 @@ class MapThemeToolbox:
         act.triggered.connect(self.run_quick_sync)
         designer.atlasToolbar().addAction(act)
 
-        copy_act = QAction(self._make_copy_extent_icon(),
-                           "Copy Map Extent (row for Excel)",
-                           designer.window())
-        copy_act.setToolTip(
-            "Copy the selected map item's extent to the clipboard as\n"
-            "xmin<TAB>ymin<TAB>xmax<TAB>ymax — paste as one row in Excel."
-        )
-        copy_act.triggered.connect(lambda _=False, d=designer: self.run_copy_extent(d))
-        designer.atlasToolbar().addAction(copy_act)
-
         self._layout_qs_actions[key] = act
 
-        def _cleanup(_obj, _key=key, _act=act, _copy_act=copy_act):
+        def _cleanup(_obj, _key=key, _act=act):
             self._layout_qs_actions.pop(_key, None)
             _act.deleteLater()
-            _copy_act.deleteLater()
 
         designer.destroyed.connect(_cleanup)
         self._sync_layout_action(act)
 
-    def run_copy_extent(self, designer):
+        self._inject_map_widget_button(designer)
+
+    def _inject_map_widget_button(self, designer):
+        try:
+            from qgis.gui import QgsLayoutMapWidget
+        except Exception:
+            return
+
+        injected = set()
+
+        def scan_and_inject():
+            try:
+                win = designer.window()
+            except Exception:
+                return
+            if win is None:
+                return
+            for w in win.findChildren(QgsLayoutMapWidget):
+                wid = id(w)
+                if wid in injected:
+                    continue
+                tbs = w.findChildren(QToolBar)
+                if not tbs:
+                    continue
+                tb = tbs[0]
+                copy_act = QAction(self._make_copy_extent_icon(),
+                                   "Copy Map Extent (row for Excel)", tb)
+                copy_act.setToolTip(
+                    "Copy this map item's extent to the clipboard as\n"
+                    "xmin<TAB>ymin<TAB>xmax<TAB>ymax — paste as one row in Excel."
+                )
+                copy_act.triggered.connect(
+                    lambda _=False, mw=w: self._run_copy_extent_from_widget(mw))
+                tb.addSeparator()
+                tb.addAction(copy_act)
+                injected.add(wid)
+
+                def _drop(_obj, _wid=wid):
+                    injected.discard(_wid)
+                w.destroyed.connect(_drop)
+
         try:
             layout = designer.layout()
+            if layout is not None:
+                layout.selectionChanged.connect(
+                    lambda: QTimer.singleShot(0, scan_and_inject))
         except Exception:
-            layout = None
-        if layout is None:
-            QMessageBox.warning(designer.window(), "Copy Map Extent",
-                                "No layout is available in this designer.")
-            return
+            pass
+        QTimer.singleShot(0, scan_and_inject)
 
-        selected_maps = [it for it in layout.selectedLayoutItems()
-                         if isinstance(it, QgsLayoutItemMap)]
+    def _run_copy_extent_from_widget(self, map_widget):
         map_item = None
-        if len(selected_maps) == 1:
-            map_item = selected_maps[0]
-        elif len(selected_maps) > 1:
-            QMessageBox.information(designer.window(), "Copy Map Extent",
-                "Multiple map items are selected. Please select just one map.")
+        try:
+            map_item = map_widget.item()
+        except Exception:
+            try:
+                from qgis.core import QgsLayoutItemMap as _MI
+                cands = [it for it in map_widget.findChildren(_MI)]
+                if cands:
+                    map_item = cands[0]
+            except Exception:
+                pass
+        if map_item is None:
+            QMessageBox.warning(self.iface.mainWindow(), "Copy Map Extent",
+                                "Could not read the map item from this panel.")
             return
-        else:
-            all_maps = [it for it in layout.items() if isinstance(it, QgsLayoutItemMap)]
-            if len(all_maps) == 1:
-                map_item = all_maps[0]
-            elif not all_maps:
-                QMessageBox.information(designer.window(), "Copy Map Extent",
-                    "This layout has no map items.")
-                return
-            else:
-                QMessageBox.information(designer.window(), "Copy Map Extent",
-                    "Multiple map items found. Select the map you want to copy the extent of, then click again.")
-                return
-
         ext = map_item.extent()
         text = "\t".join(f"{v:.3f}" for v in
                         (ext.xMinimum(), ext.yMinimum(), ext.xMaximum(), ext.yMaximum()))
