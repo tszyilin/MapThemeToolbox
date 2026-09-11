@@ -12,10 +12,10 @@ Toolbar buttons:
 
 import os
 import math
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QDialog
-from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush
+from qgis.PyQt.QtWidgets import QAction, QMessageBox, QDialog, QApplication
+from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
-from qgis.core import QgsApplication, QgsProject
+from qgis.core import QgsApplication, QgsProject, QgsLayoutItemMap
 
 from .compat import (
     Transparent, NoBrush, NoPen, SolidLine, RoundCap,
@@ -193,6 +193,25 @@ class MapThemeToolbox:
         for act in list(self._layout_qs_actions.values()):
             self._sync_layout_action(act)
 
+    def _make_copy_extent_icon(self):
+        SIZE = 20
+        pix = QPixmap(SIZE, SIZE)
+        pix.fill(Transparent)
+        p = QPainter(pix)
+        p.setRenderHint(Antialiasing)
+        col = QColor("#2c3e50")
+        p.setPen(QPen(col, 1.6))
+        p.setBrush(NoBrush)
+        p.drawRect(3, 5, 14, 12)
+        f = QFont()
+        f.setPointSizeF(6.5)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(QColor("#c0392b"), 1))
+        p.drawText(pix.rect().adjusted(0, 1, 0, 0), Qt.AlignCenter, "XY")
+        p.end()
+        return QIcon(pix)
+
     def _inject_layout_qs(self, designer):
         key = id(designer)
         if key in self._layout_qs_actions:
@@ -202,14 +221,66 @@ class MapThemeToolbox:
         act.triggered.connect(self.run_quick_sync)
         designer.atlasToolbar().addAction(act)
 
+        copy_act = QAction(self._make_copy_extent_icon(),
+                           "Copy Map Extent (row for Excel)",
+                           designer.window())
+        copy_act.setToolTip(
+            "Copy the selected map item's extent to the clipboard as\n"
+            "xmin<TAB>ymin<TAB>xmax<TAB>ymax — paste as one row in Excel."
+        )
+        copy_act.triggered.connect(lambda _=False, d=designer: self.run_copy_extent(d))
+        designer.atlasToolbar().addAction(copy_act)
+
         self._layout_qs_actions[key] = act
 
-        def _cleanup(_obj, _key=key, _act=act):
+        def _cleanup(_obj, _key=key, _act=act, _copy_act=copy_act):
             self._layout_qs_actions.pop(_key, None)
             _act.deleteLater()
+            _copy_act.deleteLater()
 
         designer.destroyed.connect(_cleanup)
         self._sync_layout_action(act)
+
+    def run_copy_extent(self, designer):
+        try:
+            layout = designer.layout()
+        except Exception:
+            layout = None
+        if layout is None:
+            QMessageBox.warning(designer.window(), "Copy Map Extent",
+                                "No layout is available in this designer.")
+            return
+
+        selected_maps = [it for it in layout.selectedLayoutItems()
+                         if isinstance(it, QgsLayoutItemMap)]
+        map_item = None
+        if len(selected_maps) == 1:
+            map_item = selected_maps[0]
+        elif len(selected_maps) > 1:
+            QMessageBox.information(designer.window(), "Copy Map Extent",
+                "Multiple map items are selected. Please select just one map.")
+            return
+        else:
+            all_maps = [it for it in layout.items() if isinstance(it, QgsLayoutItemMap)]
+            if len(all_maps) == 1:
+                map_item = all_maps[0]
+            elif not all_maps:
+                QMessageBox.information(designer.window(), "Copy Map Extent",
+                    "This layout has no map items.")
+                return
+            else:
+                QMessageBox.information(designer.window(), "Copy Map Extent",
+                    "Multiple map items found. Select the map you want to copy the extent of, then click again.")
+                return
+
+        ext = map_item.extent()
+        text = "\t".join(f"{v:.3f}" for v in
+                        (ext.xMinimum(), ext.yMinimum(), ext.xMaximum(), ext.yMaximum()))
+        QApplication.clipboard().setText(text)
+        try:
+            self.iface.messageBar().pushSuccess("Copied Map Extent", text)
+        except Exception:
+            pass
 
     def _on_layout_designer_opened(self, designer):
         self._inject_layout_qs(designer)
