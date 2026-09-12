@@ -375,8 +375,21 @@ class ThemePresenterDock(QDockWidget):
 
     # ── Populate ──────────────────────────────────────────────────────────────
 
+    def _collect_collapsed_groups(self):
+        collapsed = set()
+        def walk(item):
+            for i in range(item.childCount()):
+                child = item.child(i)
+                gname = child.data(0, GROUP_NAME_ROLE)
+                if gname is not None and not child.isExpanded():
+                    collapsed.add(gname)
+                walk(child)
+        walk(self._list.invisibleRootItem())
+        return collapsed
+
     def _populate(self):
         selected   = self._selected_theme()
+        collapsed  = self._collect_collapsed_groups()
         self._list.clear()
         tc         = self._tc()
         all_themes = set(tc.mapThemes())
@@ -401,21 +414,22 @@ class ThemePresenterDock(QDockWidget):
         bold     = QFont(); bold.setBold(True)
         grp_bold = QFont(); grp_bold.setBold(True)
         self._populate_children(self._list.invisibleRootItem(),
-                                tree.get("children", []), selected, bold, grp_bold)
+                                tree.get("children", []), selected, bold, grp_bold,
+                                collapsed)
         self._filter(self._search.text())
         self._update_ungroup_btn()
 
-    def _populate_children(self, parent, children, selected, bold, grp_bold):
+    def _populate_children(self, parent, children, selected, bold, grp_bold, collapsed=frozenset()):
         for node in children:
             if node["type"] == "group":
                 grp = QTreeWidgetItem(parent, [f"  📁  {node['name']}"])
                 grp.setFont(0, grp_bold)
                 grp.setForeground(0, QColor("#1a5276"))
-                grp.setExpanded(True)
+                grp.setExpanded(node["name"] not in collapsed)
                 grp.setData(0, UserRole, None)
                 grp.setData(0, GROUP_NAME_ROLE, node["name"])
                 grp.setFlags(ItemIsEnabled | ItemIsSelectable | ItemIsDragEnabled | ItemIsDropEnabled)
-                self._populate_children(grp, node.get("children", []), selected, bold, grp_bold)
+                self._populate_children(grp, node.get("children", []), selected, bold, grp_bold, collapsed)
             elif node["type"] == "theme":
                 name = node["name"]
                 item = QTreeWidgetItem(parent, [f"  {name}"])
