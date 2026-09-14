@@ -225,7 +225,10 @@ class MapThemeToolbox:
 
         def _cleanup(_obj, _key=key, _act=act):
             self._layout_qs_actions.pop(_key, None)
-            _act.deleteLater()
+            try:
+                _act.deleteLater()
+            except RuntimeError:
+                pass
 
         designer.destroyed.connect(_cleanup)
         self._sync_layout_action(act)
@@ -233,12 +236,7 @@ class MapThemeToolbox:
         self._inject_map_widget_button(designer)
 
     def _inject_map_widget_button(self, designer):
-        try:
-            from qgis.gui import QgsLayoutMapWidget
-        except Exception:
-            return
-
-        injected = set()
+        from qgis.PyQt.QtWidgets import QWidget
 
         def scan_and_inject():
             try:
@@ -247,29 +245,27 @@ class MapThemeToolbox:
                 return
             if win is None:
                 return
-            for w in win.findChildren(QgsLayoutMapWidget):
-                wid = id(w)
-                if wid in injected:
-                    continue
+            widgets = [w for w in win.findChildren(QWidget)
+                       if w.metaObject().className() == "QgsLayoutMapWidget"]
+            for w in widgets:
                 tbs = w.findChildren(QToolBar)
                 if not tbs:
                     continue
                 tb = tbs[0]
+                if tb.property("mtt_copy_extent_injected"):
+                    continue
                 copy_act = QAction(self._make_copy_extent_icon(),
                                    "Copy Map Extent (row for Excel)", tb)
+                copy_act.setObjectName("mtt_copy_extent_action")
                 copy_act.setToolTip(
                     "Copy this map item's extent to the clipboard as\n"
                     "xmin<TAB>ymin<TAB>xmax<TAB>ymax — paste as one row in Excel."
                 )
                 copy_act.triggered.connect(
-                    lambda _=False, mw=w: self._run_copy_extent_from_widget(mw))
+                    lambda _=False, d=designer: self._run_copy_extent_from_designer(d))
                 tb.addSeparator()
                 tb.addAction(copy_act)
-                injected.add(wid)
-
-                def _drop(_obj, _wid=wid):
-                    injected.discard(_wid)
-                w.destroyed.connect(_drop)
+                tb.setProperty("mtt_copy_extent_injected", True)
 
         try:
             layout = designer.layout()
@@ -280,18 +276,28 @@ class MapThemeToolbox:
             pass
         QTimer.singleShot(0, scan_and_inject)
 
-    def _run_copy_extent_from_widget(self, map_widget):
+        poll = QTimer(designer.window())
+        poll.setInterval(500)
+        poll.timeout.connect(scan_and_inject)
+        poll.start()
+        designer.destroyed.connect(lambda _=None, t=poll: t.stop())
+
+    def _run_copy_extent_from_designer(self, designer):
         map_item = None
         try:
-            map_item = map_widget.item()
+            layout = designer.layout()
+            if layout is not None:
+                for it in layout.selectedLayoutItems():
+                    if isinstance(it, QgsLayoutItemMap):
+                        map_item = it
+                        break
+                if map_item is None:
+                    for it in layout.items():
+                        if isinstance(it, QgsLayoutItemMap):
+                            map_item = it
+                            break
         except Exception:
-            try:
-                from qgis.core import QgsLayoutItemMap as _MI
-                cands = [it for it in map_widget.findChildren(_MI)]
-                if cands:
-                    map_item = cands[0]
-            except Exception:
-                pass
+            pass
         if map_item is None:
             QMessageBox.warning(self.iface.mainWindow(), "Copy Map Extent",
                                 "Could not read the map item from this panel.")
