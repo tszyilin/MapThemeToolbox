@@ -74,52 +74,6 @@ class ThemeTree(QTreeWidget):
         self._dock._rebuild_from_tree()
 
 
-# ── Create Group dialog ───────────────────────────────────────────────────────
-
-class CreateGroupDialog(QDialog):
-    def __init__(self, themes, groups_map, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Create / Move into Group")
-        self.setMinimumWidth(380)
-        self.setMinimumHeight(440)
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-        layout.addWidget(QLabel("<b>Group name:</b>"))
-        self._name_edit = QLineEdit()
-        self._name_edit.setPlaceholderText("e.g.  FDF")
-        layout.addWidget(self._name_edit)
-
-        layout.addWidget(QLabel("<b>Themes to add to this group:</b>"))
-        hint = QLabel("Hold Ctrl to select multiple.  Current group shown in [brackets].")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color:#666; font-size:10px;")
-        layout.addWidget(hint)
-
-        self._list = QListWidget()
-        self._list.setSelectionMode(ExtendedSelection)
-        for theme in sorted(themes, key=str.casefold):
-            grp   = groups_map.get(theme)
-            label = f"{theme}  [{grp}]" if grp else theme
-            item  = QListWidgetItem(label)
-            item.setData(UserRole, theme)
-            if grp:
-                item.setForeground(QColor("#1a5276"))
-            self._list.addItem(item)
-        layout.addWidget(self._list)
-
-        btns = QDialogButtonBox(Button_Ok | Button_Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
-
-    def group_name(self):
-        return self._name_edit.text().strip()
-
-    def selected_themes(self):
-        return [item.data(UserRole) for item in self._list.selectedItems()]
-
-
 # ── Theme Presenter dock ──────────────────────────────────────────────────────
 
 class ThemePresenterDock(QDockWidget):
@@ -541,22 +495,25 @@ class ThemePresenterDock(QDockWidget):
 
     def _on_context_menu(self, pos):
         item = self._list.itemAt(pos)
-        if item is None:
-            return
-        name = item.data(0, UserRole)
-        if not name:
-            return
-        self._list.setCurrentItem(item)
+        name = item.data(0, UserRole) if item is not None else None
+        if item is not None:
+            self._list.setCurrentItem(item)
         menu = QMenu(self._list)
-        act_apply   = menu.addAction("✅  Apply Theme")
-        act_replace = menu.addAction("🔄  Replace with Current Canvas…")
-        menu.addSeparator()
-        act_rename  = menu.addAction("✏️  Rename…")
-        act_delete  = menu.addAction("🗑  Delete…")
+        act_apply = act_replace = act_rename = act_delete = None
+        if name:
+            act_apply   = menu.addAction("✅  Apply Theme")
+            act_replace = menu.addAction("🔄  Replace with Current Canvas…")
+            menu.addSeparator()
+            act_rename  = menu.addAction("✏️  Rename…")
+            act_delete  = menu.addAction("🗑  Delete…")
+            menu.addSeparator()
+        act_group = menu.addAction("📁  Create Group…")
         chosen = menu.exec_(self._list.viewport().mapToGlobal(pos))
         if chosen is None:
             return
-        if chosen is act_apply:
+        if chosen is act_group:
+            self._on_create_group()
+        elif chosen is act_apply:
             self._on_item_clicked(item, 0)
         elif chosen is act_replace:
             self._replace_theme(name)
@@ -590,33 +547,18 @@ class ThemePresenterDock(QDockWidget):
         self._populate()
 
     def _on_create_group(self):
-        tc     = self._tc()
-        themes = list(tc.mapThemes())
-        if not themes:
-            QMessageBox.information(self, "No Themes", "No themes in the project to group.")
+        name, ok = QInputDialog.getText(self, "Create Group", "New group name:")
+        name = name.strip()
+        if not ok or not name:
             return
-        tree       = self._load_tree()
-        groups_map = self._build_groups_map(tree)
-        dlg        = CreateGroupDialog(themes, groups_map, parent=self)
-        if dlg.exec() != Accepted:
+        tree = self._load_tree()
+        if self._find_top_group(tree, name) is not None:
+            QMessageBox.warning(self, "Already Exists",
+                                f"A group named '{name}' already exists.")
             return
-        group_name = dlg.group_name()
-        selected   = dlg.selected_themes()
-        if not group_name:
-            QMessageBox.warning(self, "No Group Name", "Please enter a group name.")
-            return
-        if not selected:
-            QMessageBox.warning(self, "Nothing Selected", "Please select at least one theme.")
-            return
-        self._remove_themes_from_tree(tree, set(selected))
-        target_grp = self._find_top_group(tree, group_name)
-        if target_grp is None:
-            target_grp = {"type": "group", "name": group_name, "children": []}
-            tree["children"].append(target_grp)
-        for name in selected:
-            target_grp["children"].append({"type": "theme", "name": name})
+        tree["children"].append({"type": "group", "name": name, "children": []})
         self._save_tree(tree)
-        self._status.setText(f"📁  Assigned {len(selected)} theme(s) to group <b>{group_name}</b>")
+        self._status.setText(f"📁  Created empty group <b>{name}</b> — drag themes into it.")
         self._populate()
 
     def _on_ungroup(self):
