@@ -97,10 +97,6 @@ class MapThemeToolbox:
                          self.run_present, "Apply any map theme with a single click")
         self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
                          self.run_sync, "Open the sync connection setup dialog")
-        self._add_action("icon_export.png", "Export / Import Theme Session",
-                         self.run_session,
-                         "Save all themes + layer sources + styles to a file — "
-                         "reimport later to rebuild everything")
 
         self._quick_sync_action = QAction(
             self._icon("icon_sync_off.png"),
@@ -445,11 +441,6 @@ class MapThemeToolbox:
         except Exception:
             pass
         return "?"
-
-    def run_session(self):
-        from .dialog_session import SessionDialog
-        SessionDialog(self.iface, plugin_version=self._plugin_version(),
-                      parent=self.iface.mainWindow()).exec()
 
     def _on_autosave_changed(self):
         if self._autosave_action is None or self._autosave is None:
