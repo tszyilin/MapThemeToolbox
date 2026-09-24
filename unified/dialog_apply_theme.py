@@ -253,6 +253,16 @@ class ThemePresenterDock(QDockWidget):
                 c["name"] = new
             self._rename_group_in_tree(c, old, new)
 
+    def _remove_group_from_tree(self, node, name):
+        if "children" not in node:
+            return
+        node["children"] = [
+            c for c in node["children"]
+            if not (c["type"] == "group" and c["name"] == name)
+        ]
+        for c in node["children"]:
+            self._remove_group_from_tree(c, name)
+
     def _find_top_group(self, tree, name):
         for c in tree.get("children", []):
             if c["type"] == "group" and c["name"] == name:
@@ -499,6 +509,7 @@ class ThemePresenterDock(QDockWidget):
     def _on_context_menu(self, pos):
         item = self._list.itemAt(pos)
         name = item.data(0, UserRole) if item is not None else None
+        group_name = item.data(0, GROUP_NAME_ROLE) if item is not None else None
         if item is not None:
             self._list.setCurrentItem(item)
         menu = QMenu(self._list)
@@ -509,6 +520,10 @@ class ThemePresenterDock(QDockWidget):
             menu.addSeparator()
             act_rename  = menu.addAction("✏️  Rename…")
             act_delete  = menu.addAction("🗑  Delete…")
+            menu.addSeparator()
+        elif group_name:
+            act_rename  = menu.addAction("✏️  Rename Group…")
+            act_delete  = menu.addAction("🗑  Delete Group…")
             menu.addSeparator()
         act_group = menu.addAction("📁  Create Group…")
         chosen = menu.exec_(self._list.viewport().mapToGlobal(pos))
@@ -528,14 +543,33 @@ class ThemePresenterDock(QDockWidget):
     def _on_delete(self):
         item = self._list.currentItem()
         if item is None:
-            QMessageBox.warning(self, "Nothing Selected", "Please click a theme to delete.")
+            QMessageBox.warning(self, "Nothing Selected",
+                                "Please click a theme or empty group to delete.")
             return
-        if item.data(0, UserRole) is None:
-            QMessageBox.information(self, "Select a Theme",
-                "To delete a group, first move or delete all themes inside it.\n"
-                "Empty groups are removed automatically.")
+        theme_name = item.data(0, UserRole)
+        if theme_name is None:
+            group_name = item.data(0, GROUP_NAME_ROLE)
+            if not group_name:
+                return
+            if item.childCount() > 0:
+                QMessageBox.information(self, "Group Not Empty",
+                    f"Group <b>{group_name}</b> still contains themes.\n"
+                    "Move or delete those themes first, then delete the group.")
+                return
+            reply = QMessageBox.question(
+                self, "Delete Group",
+                f"Delete empty group <b>{group_name}</b>?",
+                Button_Yes | Button_No, Button_No
+            )
+            if reply != Button_Yes:
+                return
+            tree = self._load_tree()
+            self._remove_group_from_tree(tree, group_name)
+            self._save_tree(tree)
+            self._status.setText(f"🗑  Deleted empty group <b>{group_name}</b>")
+            self._populate()
             return
-        name = item.data(0, UserRole)
+        name = theme_name
         reply = QMessageBox.question(
             self, "Delete Theme",
             f"Delete theme <b>{name}</b> from QGIS? This cannot be undone.",
