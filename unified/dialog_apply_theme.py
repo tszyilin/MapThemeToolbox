@@ -4,6 +4,7 @@ Theme Presenter — dockable panel.  QGIS 3.22+ and QGIS 4.x.
 """
 
 import json
+import os
 
 from qgis.PyQt.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QGridLayout,
@@ -112,7 +113,6 @@ class ThemePresenterDock(QDockWidget):
         self._list.setAlternatingRowColors(True)
         self._list.setIndentation(16)
         self._list.itemClicked.connect(self._on_item_clicked)
-        self._list.currentItemChanged.connect(self._on_selection_changed)
         self._list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._list)
@@ -141,18 +141,17 @@ class ThemePresenterDock(QDockWidget):
         grp_grid = QGridLayout()
         grp_grid.setSpacing(4)
         self._btn_group   = QPushButton("📁  Create Group")
-        self._btn_ungroup = QPushButton("↩  Ungroup")
+        self._btn_session = QPushButton("💾  Export Session…")
         self._btn_group.setToolTip(
             "Assign themes to a named group.\n"
             "Drag group headers to reorder or nest as sub-groups.")
-        self._btn_ungroup.setToolTip(
-            "Move selected theme to the top level (no group).\n"
-            "Or drag it out of the group folder.")
-        self._btn_ungroup.setEnabled(False)
+        self._btn_session.setToolTip(
+            "Export / import a self-contained snapshot of all themes\n"
+            "(layers + styles + Presenter tree) as a JSON file.")
         self._btn_group.clicked.connect(self._on_create_group)
-        self._btn_ungroup.clicked.connect(self._on_ungroup)
+        self._btn_session.clicked.connect(self._on_session)
         grp_grid.addWidget(self._btn_group,   0, 0)
-        grp_grid.addWidget(self._btn_ungroup, 0, 1)
+        grp_grid.addWidget(self._btn_session, 0, 1)
         layout.addLayout(grp_grid)
 
         self._status = QLabel("No theme applied yet.")
@@ -330,13 +329,6 @@ class ThemePresenterDock(QDockWidget):
                                 "Please click a theme (not a group) in the list first.")
         return name
 
-    def _update_ungroup_btn(self):
-        name = self._selected_theme()
-        self._btn_ungroup.setEnabled(bool(name) and self._is_theme_grouped(name))
-
-    def _on_selection_changed(self, current, previous):
-        self._update_ungroup_btn()
-
     # ── Populate ──────────────────────────────────────────────────────────────
 
     def _collect_collapsed_groups(self):
@@ -372,7 +364,6 @@ class ThemePresenterDock(QDockWidget):
             ph = QTreeWidgetItem(self._list, ["  (no themes in project)"])
             ph.setFlags(ph.flags() & ~ItemIsEnabled)
             ph.setForeground(0, QColor("#999"))
-            self._btn_ungroup.setEnabled(False)
             return
 
         bold     = QFont(); bold.setBold(True)
@@ -381,7 +372,6 @@ class ThemePresenterDock(QDockWidget):
                                 tree.get("children", []), selected, bold, grp_bold,
                                 collapsed)
         self._filter(self._search.text())
-        self._update_ungroup_btn()
 
     def _populate_children(self, parent, children, selected, bold, grp_bold, collapsed=frozenset()):
         for node in children:
@@ -598,18 +588,19 @@ class ThemePresenterDock(QDockWidget):
         self._status.setText(f"📁  Created empty group <b>{name}</b> — drag themes into it.")
         self._populate()
 
-    def _on_ungroup(self):
-        name = self._require_theme_selection()
-        if not name:
-            return
-        tree       = self._load_tree()
-        groups_map = self._build_groups_map(tree)
-        if name not in groups_map:
-            QMessageBox.information(self, "Not Grouped", f"'{name}' is not inside any group.")
-            return
-        old_group = groups_map[name]
-        self._remove_themes_from_tree(tree, {name})
-        tree["children"].append({"type": "theme", "name": name})
-        self._save_tree(tree)
-        self._status.setText(f"↩  Removed <b>{name}</b> from group <b>{old_group}</b>")
-        self._populate()
+    def _on_session(self):
+        from .dialog_session import SessionDialog
+        SessionDialog(self.iface,
+                      plugin_version=self._plugin_version(),
+                      parent=self.iface.mainWindow()).exec()
+
+    def _plugin_version(self):
+        try:
+            path = os.path.join(os.path.dirname(__file__), "metadata.txt")
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().startswith("version="):
+                        return line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+        return "?"
