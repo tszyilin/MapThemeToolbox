@@ -412,8 +412,11 @@ class ThemePresenterDock(QDockWidget):
         for i in range(item.childCount()):
             if self._filter_node(item.child(i), text):
                 any_visible = True
-        item.setHidden(not any_visible)
-        return any_visible
+        # When no filter is active, keep groups visible even if empty so the
+        # user can see (and drag themes into) newly created empty groups.
+        visible = any_visible or not text
+        item.setHidden(not visible)
+        return visible
 
     # ── Actions ───────────────────────────────────────────────────────────────
 

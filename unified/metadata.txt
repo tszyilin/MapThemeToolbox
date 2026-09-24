@@ -2,11 +2,11 @@
 name=MapThemeToolbox
 qgisMinimumVersion=3.22
 qgisMaximumVersion=4.99
-description=Map Theme toolbox: Modify, Repair, Present themes, Sync and Auto-Save
-version=3.19
+description=Map Theme toolbox: Modify, Repair, Present themes, Sync, Session Export/Import and Auto-Save
+version=3.20.2
 author=Safin
 email=
-about=A combined toolbar for managing QGIS Map Themes: modify mutual layer visibility across themes, repair broken layer paths, present themes with a single click, sync with Excel/CSV/GeoPackage, and auto-save the project on a timer. Compatible with QGIS 3.22+ and QGIS 4.x.
+about=A combined toolbar for managing QGIS Map Themes: modify mutual layer visibility across themes, repair broken layer paths, present themes with a single click, sync with Excel/CSV/GeoPackage, export/import a full theme session (layers + styles + Presenter tree) as a disaster-recovery snapshot, and auto-save the project on a timer. Compatible with QGIS 3.22+ and QGIS 4.x.
 category=Plugins
 icon=icon_toolbox.png
 experimental=False
