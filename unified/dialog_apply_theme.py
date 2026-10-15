@@ -16,7 +16,7 @@ from qgis.PyQt.QtWidgets import (
     QMenu,
 )
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor, QFont
+from qgis.PyQt.QtGui import QBrush, QColor, QFont
 from qgis.core import QgsProject
 
 from .compat import (
@@ -350,8 +350,6 @@ class ThemePresenterDock(QDockWidget):
     def _populate(self):
         selected   = self._selected_theme()
         collapsed  = self._collect_collapsed_groups()
-        vbar       = self._list.verticalScrollBar()
-        scroll_pos = vbar.value()
         self._list.clear()
         tc         = self._tc()
         all_themes = set(tc.mapThemes())
@@ -378,7 +376,6 @@ class ThemePresenterDock(QDockWidget):
                                 tree.get("children", []), selected, bold, grp_bold,
                                 collapsed, ())
         self._filter(self._search.text())
-        vbar.setValue(scroll_pos)
 
     def _populate_children(self, parent, children, selected, bold, grp_bold, collapsed=frozenset(), path=()):
         for node in children:
@@ -436,7 +433,28 @@ class ThemePresenterDock(QDockWidget):
         self.iface.mapCanvas().refresh()
         self._current_theme = name
         self._status.setText(f"✅  Applied: <b>{name}</b>")
-        self._populate()
+        # Restyle in place instead of rebuilding, so the list doesn't scroll.
+        self._refresh_highlight()
+
+    def _refresh_highlight(self):
+        bold   = QFont(); bold.setBold(True)
+        normal = QFont()
+        text   = self._list.palette().text()
+        def walk(parent):
+            for i in range(parent.childCount()):
+                child = parent.child(i)
+                theme_name = child.data(0, UserRole)
+                if theme_name is None:
+                    walk(child)
+                elif theme_name == self._current_theme:
+                    child.setFont(0, bold)
+                    child.setForeground(0, QColor("#155724"))
+                    child.setBackground(0, QColor("#d4edda"))
+                else:
+                    child.setFont(0, normal)
+                    child.setForeground(0, text)
+                    child.setBackground(0, QBrush())
+        walk(self._list.invisibleRootItem())
 
     def _on_add(self):
         tc = self._tc()
