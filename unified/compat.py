@@ -46,6 +46,7 @@ if QT6:
     LeftDock              = Qt.DockWidgetArea.LeftDockWidgetArea
     BottomDock            = Qt.DockWidgetArea.BottomDockWidgetArea
     Horizontal            = Qt.Orientation.Horizontal
+    ElideMiddle           = Qt.TextElideMode.ElideMiddle
     WindowModal           = Qt.WindowModality.WindowModal
 
     # ── QAbstractItemView ─────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ if QT6:
 
     # ── QHeaderView ───────────────────────────────────────────────────────────
     ResizeToContents      = QHeaderView.ResizeMode.ResizeToContents
+    Interactive           = QHeaderView.ResizeMode.Interactive
     Stretch               = QHeaderView.ResizeMode.Stretch
 
     # ── QDialogButtonBox ──────────────────────────────────────────────────────
@@ -123,6 +125,7 @@ else:  # Qt 5 / PyQt5
     LeftDock              = Qt.LeftDockWidgetArea
     BottomDock            = Qt.BottomDockWidgetArea
     Horizontal            = Qt.Horizontal
+    ElideMiddle           = Qt.ElideMiddle
     WindowModal           = Qt.WindowModal
 
     # ── QAbstractItemView ─────────────────────────────────────────────────────
@@ -148,6 +151,7 @@ else:  # Qt 5 / PyQt5
 
     # ── QHeaderView ───────────────────────────────────────────────────────────
     ResizeToContents      = QHeaderView.ResizeToContents
+    Interactive           = QHeaderView.Interactive
     Stretch               = QHeaderView.Stretch
 
     # ── QDialogButtonBox ──────────────────────────────────────────────────────

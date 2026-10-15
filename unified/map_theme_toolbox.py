@@ -470,7 +470,7 @@ class MapThemeToolbox:
         layers = list(QgsProject.instance().mapLayers().values())
         total  = len(layers)
         reloaded, reconnected = 0, 0
-        failed = []
+        failed = []     # (name, reason, source)
         canceled = False
 
         progress = QProgressDialog("Preparing…", "Cancel", 0, total, self.iface.mainWindow())
@@ -479,6 +479,7 @@ class MapThemeToolbox:
         progress.setMinimumDuration(0)
         progress.setMinimumWidth(420)
         progress.setValue(0)
+        from .dialog_refresh_summary import missing_reason
         try:
             for i, layer in enumerate(layers):
                 if progress.wasCanceled():
@@ -499,11 +500,11 @@ class MapThemeToolbox:
                         if layer.isValid():
                             reconnected += 1
                         else:
-                            failed.append(layer.name())
+                            failed.append((layer.name(), missing_reason(layer), layer.source()))
                             continue
                     layer.triggerRepaint()
-                except Exception:
-                    failed.append(layer.name())
+                except Exception as exc:
+                    failed.append((layer.name(), missing_reason(layer, exc), layer.source()))
 
             progress.setLabelText("Redrawing map…")
             progress.setValue(total)
@@ -519,16 +520,23 @@ class MapThemeToolbox:
         finally:
             progress.close()
 
+        skipped = total - reloaded - reconnected - len(failed)
         summary = f"Reloaded {reloaded} layer(s)"
         if reconnected:
             summary += f", reconnected {reconnected}"
         if canceled:
-            summary += f"  |  canceled, {total - reloaded - reconnected - len(failed)} skipped"
+            summary += f"  |  canceled, {skipped} skipped"
         if failed:
-            shown = ", ".join(failed[:5]) + (f" (+{len(failed) - 5} more)" if len(failed) > 5 else "")
             self.iface.messageBar().pushWarning(
                 "Refresh Layer Sources",
-                f"{summary}  |  {len(failed)} still unavailable: {shown}")
+                f"{summary}  |  {len(failed)} still unavailable")
+            from .dialog_refresh_summary import RefreshSummaryDialog
+            dlg = RefreshSummaryDialog(failed, reloaded, reconnected,
+                                       skipped if canceled else 0,
+                                       parent=self.iface.mainWindow())
+            dlg.exec()
+            if dlg.open_repair:
+                self.run_repair()
         elif canceled:
             self.iface.messageBar().pushInfo("Refresh Layer Sources", summary)
         else:
