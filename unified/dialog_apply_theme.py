@@ -350,6 +350,8 @@ class ThemePresenterDock(QDockWidget):
     def _populate(self):
         selected   = self._selected_theme()
         collapsed  = self._collect_collapsed_groups()
+        vbar       = self._list.verticalScrollBar()
+        scroll_pos = vbar.value()
         self._list.clear()
         tc         = self._tc()
         all_themes = set(tc.mapThemes())
@@ -376,6 +378,7 @@ class ThemePresenterDock(QDockWidget):
                                 tree.get("children", []), selected, bold, grp_bold,
                                 collapsed, ())
         self._filter(self._search.text())
+        vbar.setValue(scroll_pos)
 
     def _populate_children(self, parent, children, selected, bold, grp_bold, collapsed=frozenset(), path=()):
         for node in children:
