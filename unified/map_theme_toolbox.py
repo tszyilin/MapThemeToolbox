@@ -13,14 +13,16 @@ Toolbar buttons:
 
 import os
 import math
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QDialog, QApplication, QToolBar
+from qgis.PyQt.QtWidgets import (
+    QAction, QMessageBox, QDialog, QApplication, QToolBar, QProgressDialog,
+)
 from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QPolygonF
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject, QgsLayoutItemMap
 
 from .compat import (
     Transparent, NoBrush, NoPen, SolidLine, RoundCap,
-    Antialiasing, RightDock, Button_Yes, Button_No, Accepted, WaitCursor,
+    Antialiasing, RightDock, Button_Yes, Button_No, Accepted, WindowModal,
 )
 from .processing_provider import MapThemeToolboxProvider
 from .sync_state import REGISTRY
@@ -465,11 +467,28 @@ class MapThemeToolbox:
         # Stop render threads so nothing is still reading through the old handles
         canvas.stopRendering()
 
+        layers = list(QgsProject.instance().mapLayers().values())
+        total  = len(layers)
         reloaded, reconnected = 0, 0
         failed = []
-        QApplication.setOverrideCursor(WaitCursor)
+        canceled = False
+
+        progress = QProgressDialog("Preparing…", "Cancel", 0, total, self.iface.mainWindow())
+        progress.setWindowTitle("Refresh Layer Sources")
+        progress.setWindowModality(WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(420)
+        progress.setValue(0)
         try:
-            for layer in QgsProject.instance().mapLayers().values():
+            for i, layer in enumerate(layers):
+                if progress.wasCanceled():
+                    canceled = True
+                    break
+                # Show the layer name *before* reloading, so a slow network
+                # layer is visible while it blocks
+                progress.setLabelText(f"Reconnecting layer {i + 1} of {total}:\n{layer.name()}")
+                progress.setValue(i)
+                QApplication.processEvents()
                 try:
                     if layer.isValid():
                         # GDAL/OGR providers close and reopen the dataset on reload
@@ -486,23 +505,32 @@ class MapThemeToolbox:
                 except Exception:
                     failed.append(layer.name())
 
-            canvas.refreshAllLayers()
+            progress.setLabelText("Redrawing map…")
+            progress.setValue(total)
+            QApplication.processEvents()
+            # Not refreshAllLayers(): that calls reload() on every layer a second time
+            canvas.clearCache()
+            canvas.refresh()
             for designer in self.iface.openLayoutDesigners():
                 try:
                     designer.layout().refresh()
                 except Exception:
                     pass
         finally:
-            QApplication.restoreOverrideCursor()
+            progress.close()
 
         summary = f"Reloaded {reloaded} layer(s)"
         if reconnected:
             summary += f", reconnected {reconnected}"
+        if canceled:
+            summary += f"  |  canceled, {total - reloaded - reconnected - len(failed)} skipped"
         if failed:
             shown = ", ".join(failed[:5]) + (f" (+{len(failed) - 5} more)" if len(failed) > 5 else "")
             self.iface.messageBar().pushWarning(
                 "Refresh Layer Sources",
                 f"{summary}  |  {len(failed)} still unavailable: {shown}")
+        elif canceled:
+            self.iface.messageBar().pushInfo("Refresh Layer Sources", summary)
         else:
             self.iface.messageBar().pushSuccess("Refresh Layer Sources", summary)
 
