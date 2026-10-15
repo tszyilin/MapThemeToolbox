@@ -4,22 +4,23 @@ Map Theme Toolbox — combined plugin  (QGIS 3.22+ and QGIS 4.x)
 Toolbar buttons:
   1. Modify Theme Layers       (icon_modify.png)
   2. Repair Unavailable Layers (icon_repair.png)
-  3. Theme Presenter           (icon_present.png)
-  4. Sync Setup                (icon_sync.png)
-  5. Quick Sync                (icon_sync_on/off)
-  6. Auto-Save                 (clock icon)
+  3. Refresh Layer Sources     (circular-arrow icon)
+  4. Theme Presenter           (icon_present.png)
+  5. Sync Setup                (icon_sync.png)
+  6. Quick Sync                (icon_sync_on/off)
+  7. Auto-Save                 (clock icon)
 """
 
 import os
 import math
 from qgis.PyQt.QtWidgets import QAction, QMessageBox, QDialog, QApplication, QToolBar
-from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont
+from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QPolygonF
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject, QgsLayoutItemMap
 
 from .compat import (
     Transparent, NoBrush, NoPen, SolidLine, RoundCap,
-    Antialiasing, RightDock, Button_Yes, Button_No, Accepted,
+    Antialiasing, RightDock, Button_Yes, Button_No, Accepted, WaitCursor,
 )
 from .processing_provider import MapThemeToolboxProvider
 from .sync_state import REGISTRY
@@ -84,6 +85,38 @@ class MapThemeToolbox:
         p.end()
         return QIcon(pix)
 
+    def _make_refresh_icon(self):
+        SIZE = 20
+        pix  = QPixmap(SIZE, SIZE)
+        pix.fill(Transparent)
+
+        p = QPainter(pix)
+        p.setRenderHint(Antialiasing)
+
+        col = QColor("#2980b9")
+        cx = cy = SIZE / 2.0
+        r  = SIZE / 2.0 - 3.0
+
+        # Open arc from 60° round to 360° (angles in 1/16 degree, CCW from 3 o'clock)
+        p.setPen(QPen(col, 2.0, SolidLine, RoundCap))
+        p.setBrush(NoBrush)
+        p.drawArc(int(cx - r), int(cy - r), int(2 * r), int(2 * r), 60 * 16, 300 * 16)
+
+        # Arrowhead at the arc's 60° end, pointing clockwise into the gap
+        a  = math.radians(60)
+        px, py = cx + r * math.cos(a), cy - r * math.sin(a)
+        dx, dy = math.sin(a), math.cos(a)      # clockwise tangent (screen coords)
+        nx, ny = -dy, dx                       # normal
+        p.setPen(NoPen)
+        p.setBrush(QBrush(col))
+        p.drawPolygon(QPolygonF([
+            QPointF(px + 3.5 * dx, py + 3.5 * dy),
+            QPointF(px - 1.5 * dx + 3.2 * nx, py - 1.5 * dy + 3.2 * ny),
+            QPointF(px - 1.5 * dx - 3.2 * nx, py - 1.5 * dy - 3.2 * ny),
+        ]))
+        p.end()
+        return QIcon(pix)
+
     def initGui(self):
         self.provider = MapThemeToolboxProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
@@ -93,6 +126,18 @@ class MapThemeToolbox:
         self._add_action("icon_repair.png", "Repair Unavailable Layers",
                          self.run_repair,
                          "Batch re-link broken layer paths after moving project files")
+
+        refresh_act = QAction(self._make_refresh_icon(), "Refresh All Layer Sources",
+                              self.iface.mainWindow())
+        refresh_act.setToolTip(
+            "Reconnect every layer to its data source\n"
+            "(fixes 'IReadBlock failed' after a network/server drop)"
+        )
+        refresh_act.triggered.connect(self.run_refresh_sources)
+        self.toolbar.addAction(refresh_act)
+        self.iface.addPluginToMenu(MENU, refresh_act)
+        self.actions.append(refresh_act)
+
         self._add_action("icon_present.png", "Theme Presenter",
                          self.run_present, "Apply any map theme with a single click")
         self._add_action("icon_sync.png", "Sync Setup (Excel/CSV ↔ GeoPackage)",
@@ -414,6 +459,52 @@ class MapThemeToolbox:
     def run_repair(self):
         from .dialog_repair_layers import RepairLayersDialog
         RepairLayersDialog(parent=self.iface.mainWindow()).exec()
+
+    def run_refresh_sources(self):
+        canvas = self.iface.mapCanvas()
+        # Stop render threads so nothing is still reading through the old handles
+        canvas.stopRendering()
+
+        reloaded, reconnected = 0, 0
+        failed = []
+        QApplication.setOverrideCursor(WaitCursor)
+        try:
+            for layer in QgsProject.instance().mapLayers().values():
+                try:
+                    if layer.isValid():
+                        # GDAL/OGR providers close and reopen the dataset on reload
+                        layer.reload()
+                        reloaded += 1
+                    else:
+                        layer.setDataSource(layer.source(), layer.name(), layer.providerType())
+                        if layer.isValid():
+                            reconnected += 1
+                        else:
+                            failed.append(layer.name())
+                            continue
+                    layer.triggerRepaint()
+                except Exception:
+                    failed.append(layer.name())
+
+            canvas.refreshAllLayers()
+            for designer in self.iface.openLayoutDesigners():
+                try:
+                    designer.layout().refresh()
+                except Exception:
+                    pass
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        summary = f"Reloaded {reloaded} layer(s)"
+        if reconnected:
+            summary += f", reconnected {reconnected}"
+        if failed:
+            shown = ", ".join(failed[:5]) + (f" (+{len(failed) - 5} more)" if len(failed) > 5 else "")
+            self.iface.messageBar().pushWarning(
+                "Refresh Layer Sources",
+                f"{summary}  |  {len(failed)} still unavailable: {shown}")
+        else:
+            self.iface.messageBar().pushSuccess("Refresh Layer Sources", summary)
 
     def run_present(self):
         from .dialog_apply_theme import ThemePresenterDock

@@ -46,6 +46,7 @@ if QT6:
     LeftDock              = Qt.DockWidgetArea.LeftDockWidgetArea
     BottomDock            = Qt.DockWidgetArea.BottomDockWidgetArea
     Horizontal            = Qt.Orientation.Horizontal
+    WaitCursor            = Qt.CursorShape.WaitCursor
 
     # ── QAbstractItemView ─────────────────────────────────────────────────────
     InternalMove          = QAbstractItemView.DragDropMode.InternalMove
@@ -122,6 +123,7 @@ else:  # Qt 5 / PyQt5
     LeftDock              = Qt.LeftDockWidgetArea
     BottomDock            = Qt.BottomDockWidgetArea
     Horizontal            = Qt.Horizontal
+    WaitCursor            = Qt.WaitCursor
 
     # ── QAbstractItemView ─────────────────────────────────────────────────────
     InternalMove          = QAbstractItemView.InternalMove
