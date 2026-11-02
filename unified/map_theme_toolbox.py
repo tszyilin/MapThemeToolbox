@@ -18,7 +18,9 @@ import math
 from qgis.PyQt.QtWidgets import (
     QAction, QMessageBox, QDialog, QApplication, QToolBar, QProgressDialog,
 )
-from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QPolygonF
+from qgis.PyQt.QtGui import (
+    QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QPolygonF, QTransform,
+)
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
 from qgis.core import QgsApplication, QgsProject, QgsLayoutItemMap
 
@@ -273,7 +275,10 @@ class MapThemeToolbox:
         layout = designer_print_layout(designer)
         if layout is None:    # reports share this designer but have no atlas
             return
-        act = QAction(self._icon("icon_export.png"), "Export Selected Atlas Pages…",
+        # Export arrow turned 90° clockwise so it points right
+        pix = QPixmap(os.path.join(os.path.dirname(__file__), "icon_export.png"))
+        icon = QIcon(pix.transformed(QTransform().rotate(90)))
+        act = QAction(icon, "Export Selected Atlas Pages…",
                       designer.window())
         act.setObjectName("mtt_export_selected_pages_action")
         act.setToolTip("Export Selected Atlas Pages\n"

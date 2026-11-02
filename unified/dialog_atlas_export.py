@@ -9,16 +9,18 @@ Pages are exported by seeking the real atlas rather than by filtering it, so
 import os
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QPushButton, QLineEdit, QComboBox, QFileDialog, QProgressDialog, QMessageBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QListWidget,
+    QListWidgetItem, QPushButton, QLineEdit, QComboBox, QFileDialog, QProgressDialog,
+    QMessageBox, QSpinBox, QSlider, QCheckBox, QGroupBox, QDialogButtonBox,
 )
 from qgis.core import (
-    QgsAbstractLayoutIterator, QgsFeedback, QgsLayoutExporter, QgsLayoutUtils,
-    QgsSettings,
+    Qgis, QgsAbstractLayoutIterator, QgsFeedback, QgsLayoutExporter, QgsLayoutUtils,
+    QgsLayoutRenderContext, QgsMargins, QgsSettings, QgsUnitTypes,
 )
 
 from .compat import (
     Checked, Unchecked, ItemIsUserCheckable, ExtendedSelection, WindowModal, Accepted,
+    Horizontal, Button_Ok, Button_Cancel,
 )
 
 TITLE = "Export Selected Atlas Pages"
@@ -140,13 +142,10 @@ class AtlasPagesDialog(QDialog):
         fmt.addWidget(self.format, 1)
         root.addLayout(fmt)
 
-        # Start from the format the layout's own atlas settings ask for
-        if _prop_bool(layout, "singleFile", True):
-            self.format.setCurrentIndex(self.format.findData(SINGLE_PDF))
-        else:
-            self.format.setCurrentIndex(self.format.findData(SEPARATE_PDFS))
+        self.format.setCurrentIndex(self.format.findData("jpg"))
 
-        note = QLabel("Uses the resolution and export options saved in this layout. "
+        note = QLabel("Image formats ask for resolution, quality and cropping next; "
+                      "PDFs use the options saved in this layout. "
                       "Separate files are named by the atlas output filename expression.")
         note.setWordWrap(True)
         note.setStyleSheet("color:#555; font-style:italic;")
@@ -251,13 +250,149 @@ def _pdf_settings(layout):
     return s
 
 
+_ANTIALIAS = getattr(QgsLayoutRenderContext, "FlagAntialiasing", None)
+if _ANTIALIAS is None:
+    _ANTIALIAS = Qgis.LayoutRenderFlag.Antialiasing
+_INCHES = Qgis.LayoutUnit.Inches if hasattr(Qgis, "LayoutUnit") else QgsUnitTypes.LayoutInches
+
+
 def _image_settings(layout):
+    """Image options as last saved in the layout (same keys as QGIS's own export)."""
     s = _common_settings(QgsLayoutExporter.ImageExportSettings(), layout)
     s.generateWorldFile = _prop_bool(layout, "exportWorldFile", False)
+    s.cropToContents    = _prop_bool(layout, "imageCropToContents", False)
+    s.cropMargins = QgsMargins(*(int(layout.customProperty(f"imageCropMargin{side}", 0))
+                                 for side in ("Left", "Top", "Right", "Bottom")))
+    if _prop_bool(layout, "imageAntialias", True):
+        s.flags = s.flags | _ANTIALIAS
+    else:
+        s.flags = s.flags & ~_ANTIALIAS
+    if hasattr(s, "quality"):
+        s.quality = int(layout.customProperty("imageQuality", 90))
     return s
 
 
-def export_pages(layout, pages, key, path, feedback=None, on_page=None):
+class ImageOptionsDialog(QDialog):
+    """Resolution, size, JPG quality and crop options, like QGIS's Image Export Options."""
+
+    def __init__(self, layout, key, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Image Export Options")
+        self._layout = layout
+        self._settings = _image_settings(layout)
+        page = layout.pageCollection().page(0)
+        inches = layout.renderContext().measurementConverter().convert(
+            page.sizeWithUnits(), _INCHES).toQSizeF()
+        self._inches = (inches.width(), inches.height())
+
+        root = QVBoxLayout(self)
+        opts = QGroupBox("Export Options")
+        form = QFormLayout(opts)
+        self.dpi = QSpinBox()
+        self.dpi.setRange(1, 3000)
+        self.dpi.setSuffix(" dpi")
+        self.width_px = QSpinBox()
+        self.height_px = QSpinBox()
+        for spin in (self.width_px, self.height_px):
+            spin.setRange(1, 99999)
+            spin.setSuffix(" px")
+        self.dpi.setValue(int(round(self._settings.dpi)))
+        self._sync_size_from_dpi()
+        self.dpi.valueChanged.connect(self._sync_size_from_dpi)
+        self.width_px.valueChanged.connect(lambda v: self._sync_dpi_from_px(v, 0))
+        self.height_px.valueChanged.connect(lambda v: self._sync_dpi_from_px(v, 1))
+        form.addRow("Export resolution", self.dpi)
+        form.addRow("Page width", self.width_px)
+        form.addRow("Page height", self.height_px)
+
+        self.quality = QSpinBox()
+        self.quality.setRange(1, 100)
+        self.quality.setSuffix("%")
+        slider = QSlider(Horizontal)
+        slider.setRange(1, 100)
+        slider.valueChanged.connect(self.quality.setValue)
+        self.quality.valueChanged.connect(slider.setValue)
+        self.quality.setValue(getattr(self._settings, "quality", 90))
+        q_row = QHBoxLayout()
+        q_row.addWidget(slider, 1)
+        q_row.addWidget(self.quality)
+        q_label = QLabel("JPG quality")
+        form.addRow(q_label, q_row)
+        jpg = key == "jpg" and hasattr(self._settings, "quality")
+        for w in (q_label, slider, self.quality):
+            w.setEnabled(jpg)
+
+        self.antialias = QCheckBox("Enable antialiasing")
+        self.antialias.setChecked(bool(self._settings.flags & _ANTIALIAS))
+        self.world_file = QCheckBox("Generate world file")
+        self.world_file.setChecked(self._settings.generateWorldFile)
+        form.addRow(self.antialias)
+        form.addRow(self.world_file)
+        root.addWidget(opts)
+
+        self.crop = QGroupBox("Crop to Content")
+        self.crop.setCheckable(True)
+        self.crop.setChecked(self._settings.cropToContents)
+        grid = QGridLayout(self.crop)
+        m = self._settings.cropMargins
+        self.margins = {}
+        for side, value, row, col in (("Top", m.top(), 0, 1), ("Left", m.left(), 1, 0),
+                                      ("Right", m.right(), 1, 2), ("Bottom", m.bottom(), 2, 1)):
+            spin = QSpinBox()
+            spin.setRange(0, 9999)
+            spin.setValue(int(value))
+            box = QHBoxLayout()
+            box.addWidget(QLabel(f"{side} margin (px)"))
+            box.addWidget(spin)
+            grid.addLayout(box, row, col)
+            self.margins[side] = spin
+        root.addWidget(self.crop)
+
+        bb = QDialogButtonBox(Button_Ok | Button_Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+    def _sync_size_from_dpi(self, _=None):
+        dpi = self.dpi.value()
+        for spin, inches in ((self.width_px, self._inches[0]), (self.height_px, self._inches[1])):
+            spin.blockSignals(True)
+            spin.setValue(int(round(inches * dpi)))
+            spin.blockSignals(False)
+
+    def _sync_dpi_from_px(self, px, axis):
+        self.dpi.blockSignals(True)
+        self.dpi.setValue(int(round(px / self._inches[axis])))
+        self.dpi.blockSignals(False)
+        other = self.height_px if axis == 0 else self.width_px
+        other.blockSignals(True)
+        other.setValue(int(round(px * self._inches[1 - axis] / self._inches[axis])))
+        other.blockSignals(False)
+
+    def settings(self):
+        """ImageExportSettings from the dialog; also saved back to the layout."""
+        s, lay = self._settings, self._layout
+        s.dpi = self.dpi.value()
+        s.generateWorldFile = self.world_file.isChecked()
+        s.cropToContents = self.crop.isChecked()
+        s.cropMargins = QgsMargins(*(self.margins[k].value()
+                                     for k in ("Left", "Top", "Right", "Bottom")))
+        if self.antialias.isChecked():
+            s.flags = s.flags | _ANTIALIAS
+        else:
+            s.flags = s.flags & ~_ANTIALIAS
+        if hasattr(s, "quality"):
+            s.quality = self.quality.value()
+            lay.setCustomProperty("imageQuality", s.quality)
+        lay.setCustomProperty("exportWorldFile", s.generateWorldFile)
+        lay.setCustomProperty("imageCropToContents", s.cropToContents)
+        lay.setCustomProperty("imageAntialias", self.antialias.isChecked())
+        for side, spin in self.margins.items():
+            lay.setCustomProperty(f"imageCropMargin{side}", spin.value())
+        return s
+
+
+def export_pages(layout, pages, key, path, feedback=None, on_page=None, image_settings=None):
     """Export atlas pages (0-based) to path — a file for SINGLE_PDF, else a folder.
 
     Returns (QgsLayoutExporter.ExportResult, error text).
@@ -270,7 +405,8 @@ def export_pages(layout, pages, key, path, feedback=None, on_page=None):
     base = os.path.join(path, "atlas")
     if key == SEPARATE_PDFS:
         return QgsLayoutExporter.exportToPdfs(iterator, base, _pdf_settings(layout), feedback)
-    return QgsLayoutExporter.exportToImage(iterator, base, key, _image_settings(layout), feedback)
+    return QgsLayoutExporter.exportToImage(iterator, base, key,
+                                           image_settings or _image_settings(layout), feedback)
 
 
 def _ask_path(parent, layout, key):
@@ -315,6 +451,13 @@ def run_atlas_export(designer):
     key   = dlg.format_key()
     _last_pages[layout.name()] = {atlas.nameForPage(p) for p in pages}
 
+    image_settings = None
+    if key not in (SINGLE_PDF, SEPARATE_PDFS):
+        opts = ImageOptionsDialog(layout, key, parent)
+        if opts.exec() != Accepted:
+            return
+        image_settings = opts.settings()
+
     path = _ask_path(parent, layout, key)
     if not path:
         return
@@ -343,7 +486,7 @@ def run_atlas_export(designer):
     if preview:
         designer.setAtlasPreviewEnabled(False)
     try:
-        result, error = export_pages(layout, pages, key, path, feedback, on_page)
+        result, error = export_pages(layout, pages, key, path, feedback, on_page, image_settings)
     finally:
         progress.close()
         view.setUpdatesEnabled(True)
