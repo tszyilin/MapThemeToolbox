@@ -16,7 +16,7 @@ Layout designer atlas toolbar:
 import os
 import math
 from qgis.PyQt.QtWidgets import (
-    QAction, QMessageBox, QDialog, QApplication, QToolBar, QToolButton, QProgressDialog,
+    QAction, QMessageBox, QDialog, QApplication, QToolBar, QProgressDialog,
 )
 from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QPolygonF
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
@@ -292,6 +292,8 @@ class MapThemeToolbox:
         if key in self._layout_export_actions:
             return
         layout = designer.layout()
+        if not hasattr(layout, "atlas") and hasattr(designer, "masterLayout"):
+            layout = designer.masterLayout()
         if not hasattr(layout, "atlas"):    # reports share this designer but have no atlas
             return
         act = QAction(self._make_atlas_export_icon(), "Export Selected Atlas Pages…",
@@ -304,15 +306,8 @@ class MapThemeToolbox:
         act.setEnabled(atlas.enabled())
         atlas.toggled.connect(act.setEnabled)
 
-        # Sit directly after the built-in Export Atlas drop-down
-        tb = designer.atlasToolbar()
-        actions = tb.actions()
-        before = None
-        for a, following in zip(actions, actions[1:]):
-            btn = tb.widgetForAction(a)
-            if isinstance(btn, QToolButton) and len(btn.actions()) > 1:
-                before = following
-        tb.insertAction(before, act)
+        # Appended just before Quick Sync, which _inject_layout_qs adds next
+        designer.atlasToolbar().addAction(act)
 
         self._layout_export_actions[key] = act
 
