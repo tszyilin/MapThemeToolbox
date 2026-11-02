@@ -9,12 +9,14 @@ Toolbar buttons:
   5. Sync Setup                (icon_sync.png)
   6. Quick Sync                (icon_sync_on/off)
   7. Auto-Save                 (clock icon)
+Layout designer atlas toolbar:
+  Export Selected Atlas Pages, Quick Sync
 """
 
 import os
 import math
 from qgis.PyQt.QtWidgets import (
-    QAction, QMessageBox, QDialog, QApplication, QToolBar, QProgressDialog,
+    QAction, QMessageBox, QDialog, QApplication, QToolBar, QToolButton, QProgressDialog,
 )
 from qgis.PyQt.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QBrush, QFont, QPolygonF
 from qgis.PyQt.QtCore import Qt, QTimer, QPointF
@@ -40,7 +42,8 @@ class MapThemeToolbox:
         self.toolbar.setObjectName("MapThemeToolboxToolbar")
         self._quick_sync_action  = None
         self._layout_qs_actions  = {}   # id(designer) -> QAction
-        self._present_dock       = None
+        self._layout_export_actions = {}   # id(designer) -> QAction
+        self._present_dock      = None
         self._autosave           = None
         self._autosave_action    = None
 
@@ -192,6 +195,9 @@ class MapThemeToolbox:
         for act in list(self._layout_qs_actions.values()):
             act.deleteLater()
         self._layout_qs_actions.clear()
+        for act in list(self._layout_export_actions.values()):
+            act.deleteLater()
+        self._layout_export_actions.clear()
         REGISTRY.unregister_callback(self._on_connection_changed)
         REGISTRY.cleanup()
         if self._autosave:
@@ -259,7 +265,69 @@ class MapThemeToolbox:
         p.end()
         return QIcon(pix)
 
+    def _make_atlas_export_icon(self):
+        SIZE = 20
+        pix = QPixmap(SIZE, SIZE)
+        pix.fill(Transparent)
+        p = QPainter(pix)
+        p.setRenderHint(Antialiasing)
+
+        # Two stacked sheets
+        p.setPen(QPen(QColor("#7f8c8d"), 1.4))
+        p.setBrush(QBrush(QColor("#ecf0f1")))
+        p.drawRect(7, 2, 10, 13)
+        p.setPen(QPen(QColor("#2c3e50"), 1.4))
+        p.setBrush(QBrush(QColor("#ffffff")))
+        p.drawRect(3, 5, 10, 13)
+
+        # Tick: only the chosen pages
+        p.setPen(QPen(QColor("#27ae60"), 2.4, SolidLine, RoundCap))
+        p.drawLine(QPointF(5.5, 12.0), QPointF(7.8, 14.5))
+        p.drawLine(QPointF(7.8, 14.5), QPointF(11.0, 8.5))
+        p.end()
+        return QIcon(pix)
+
+    def _inject_atlas_export(self, designer):
+        key = id(designer)
+        if key in self._layout_export_actions:
+            return
+        layout = designer.layout()
+        if not hasattr(layout, "atlas"):    # reports share this designer but have no atlas
+            return
+        act = QAction(self._make_atlas_export_icon(), "Export Selected Atlas Pages…",
+                      designer.window())
+        act.setObjectName("mtt_export_selected_pages_action")
+        act.setToolTip("Export Selected Atlas Pages\n"
+                       "Choose which pages to export instead of the entire atlas")
+        act.triggered.connect(lambda _=False, d=designer: self.run_atlas_export(d))
+        atlas = layout.atlas()
+        act.setEnabled(atlas.enabled())
+        atlas.toggled.connect(act.setEnabled)
+
+        # Sit directly after the built-in Export Atlas drop-down
+        tb = designer.atlasToolbar()
+        actions = tb.actions()
+        before = None
+        for a, following in zip(actions, actions[1:]):
+            btn = tb.widgetForAction(a)
+            if isinstance(btn, QToolButton) and len(btn.actions()) > 1:
+                before = following
+        tb.insertAction(before, act)
+
+        self._layout_export_actions[key] = act
+
+        def _cleanup(_obj, _key=key):
+            self._layout_export_actions.pop(_key, None)
+
+        designer.destroyed.connect(_cleanup)
+
+    def run_atlas_export(self, designer):
+        from .dialog_atlas_export import run_atlas_export
+        run_atlas_export(designer)
+
     def _inject_layout_qs(self, designer):
+        self._inject_atlas_export(designer)
+
         key = id(designer)
         if key in self._layout_qs_actions:
             return
