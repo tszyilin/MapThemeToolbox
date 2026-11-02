@@ -37,6 +37,19 @@ FORMATS = [
 _last_pages = {}    # layout name -> page names ticked last time (this session)
 
 
+def designer_print_layout(designer):
+    """The designer's print layout, or None for a report.
+
+    Some QGIS builds hand back designer.layout() as a plain QgsLayout with no
+    atlas(), so fall back to masterLayout(), which resolves to QgsPrintLayout.
+    """
+    for get in ("layout", "masterLayout"):
+        layout = getattr(designer, get, lambda: None)()
+        if hasattr(layout, "atlas"):
+            return layout
+    return None
+
+
 class SelectedPagesIterator(QgsAbstractLayoutIterator):
     """Walks only the chosen pages of an atlas, for QgsLayoutExporter."""
 
@@ -276,7 +289,9 @@ def _ask_path(parent, layout, key):
 
 
 def run_atlas_export(designer):
-    layout = designer.layout()
+    layout = designer_print_layout(designer)
+    if layout is None:
+        return
     atlas  = layout.atlas()
     parent = designer.window()
 

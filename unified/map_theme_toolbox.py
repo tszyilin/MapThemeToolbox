@@ -265,38 +265,15 @@ class MapThemeToolbox:
         p.end()
         return QIcon(pix)
 
-    def _make_atlas_export_icon(self):
-        SIZE = 20
-        pix = QPixmap(SIZE, SIZE)
-        pix.fill(Transparent)
-        p = QPainter(pix)
-        p.setRenderHint(Antialiasing)
-
-        # Two stacked sheets
-        p.setPen(QPen(QColor("#7f8c8d"), 1.4))
-        p.setBrush(QBrush(QColor("#ecf0f1")))
-        p.drawRect(7, 2, 10, 13)
-        p.setPen(QPen(QColor("#2c3e50"), 1.4))
-        p.setBrush(QBrush(QColor("#ffffff")))
-        p.drawRect(3, 5, 10, 13)
-
-        # Tick: only the chosen pages
-        p.setPen(QPen(QColor("#27ae60"), 2.4, SolidLine, RoundCap))
-        p.drawLine(QPointF(5.5, 12.0), QPointF(7.8, 14.5))
-        p.drawLine(QPointF(7.8, 14.5), QPointF(11.0, 8.5))
-        p.end()
-        return QIcon(pix)
-
     def _inject_atlas_export(self, designer):
         key = id(designer)
         if key in self._layout_export_actions:
             return
-        layout = designer.layout()
-        if not hasattr(layout, "atlas") and hasattr(designer, "masterLayout"):
-            layout = designer.masterLayout()
-        if not hasattr(layout, "atlas"):    # reports share this designer but have no atlas
+        from .dialog_atlas_export import designer_print_layout
+        layout = designer_print_layout(designer)
+        if layout is None:    # reports share this designer but have no atlas
             return
-        act = QAction(self._make_atlas_export_icon(), "Export Selected Atlas Pages…",
+        act = QAction(self._icon("icon_export.png"), "Export Selected Atlas Pages…",
                       designer.window())
         act.setObjectName("mtt_export_selected_pages_action")
         act.setToolTip("Export Selected Atlas Pages\n"
