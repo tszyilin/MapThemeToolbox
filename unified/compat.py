@@ -9,7 +9,7 @@ Usage in other modules:
     from .compat import (Checked, UserRole, Button_Yes, ...)
 """
 
-from qgis.PyQt.QtCore import Qt, qVersion
+from qgis.PyQt.QtCore import Qt, QEvent, qVersion
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QDockWidget, QFrame,
     QHeaderView, QDialogButtonBox, QMessageBox, QDialog,
@@ -48,6 +48,7 @@ if QT6:
     Horizontal            = Qt.Orientation.Horizontal
     ElideMiddle           = Qt.TextElideMode.ElideMiddle
     WindowModal           = Qt.WindowModality.WindowModal
+    ChildPolished         = QEvent.Type.ChildPolished
 
     # ── QAbstractItemView ─────────────────────────────────────────────────────
     InternalMove          = QAbstractItemView.DragDropMode.InternalMove
@@ -127,6 +128,7 @@ else:  # Qt 5 / PyQt5
     Horizontal            = Qt.Horizontal
     ElideMiddle           = Qt.ElideMiddle
     WindowModal           = Qt.WindowModal
+    ChildPolished         = QEvent.ChildPolished
 
     # ── QAbstractItemView ─────────────────────────────────────────────────────
     InternalMove          = QAbstractItemView.InternalMove

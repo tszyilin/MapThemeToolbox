@@ -45,6 +45,7 @@ class MapThemeToolbox:
         self._quick_sync_action  = None
         self._layout_qs_actions  = {}   # id(designer) -> QAction
         self._layout_export_actions = {}   # id(designer) -> QAction
+        self._native_export_hooks = {}     # id(designer) -> NativeExportHook
         self._present_dock      = None
         self._autosave           = None
         self._autosave_action    = None
@@ -200,6 +201,12 @@ class MapThemeToolbox:
         for act in list(self._layout_export_actions.values()):
             act.deleteLater()
         self._layout_export_actions.clear()
+        for hook in list(self._native_export_hooks.values()):
+            try:
+                hook.remove()
+            except RuntimeError:
+                pass
+        self._native_export_hooks.clear()
         REGISTRY.unregister_callback(self._on_connection_changed)
         REGISTRY.cleanup()
         if self._autosave:
@@ -271,10 +278,11 @@ class MapThemeToolbox:
         key = id(designer)
         if key in self._layout_export_actions:
             return
-        from .dialog_atlas_export import designer_print_layout
+        from .dialog_atlas_export import designer_print_layout, NativeExportHook
         layout = designer_print_layout(designer)
         if layout is None:    # reports share this designer but have no atlas
             return
+        self._native_export_hooks[key] = NativeExportHook(layout, designer.window())
         # Export arrow turned 90° clockwise so it points right
         pix = QPixmap(os.path.join(os.path.dirname(__file__), "icon_export.png"))
         icon = QIcon(pix.transformed(QTransform().rotate(90)))
@@ -295,6 +303,7 @@ class MapThemeToolbox:
 
         def _cleanup(_obj, _key=key):
             self._layout_export_actions.pop(_key, None)
+            self._native_export_hooks.pop(_key, None)
 
         designer.destroyed.connect(_cleanup)
 

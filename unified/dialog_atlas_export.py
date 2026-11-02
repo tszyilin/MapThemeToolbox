@@ -7,11 +7,12 @@ Pages are exported by seeking the real atlas rather than by filtering it, so
 """
 
 import os
-from qgis.PyQt.QtCore import QCoreApplication
+from qgis.PyQt import sip
+from qgis.PyQt.QtCore import QCoreApplication, QObject
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout, QLabel, QListWidget,
     QListWidgetItem, QPushButton, QLineEdit, QComboBox, QFileDialog, QProgressDialog,
-    QMessageBox, QSpinBox, QSlider, QCheckBox, QGroupBox, QDialogButtonBox,
+    QMessageBox, QSpinBox, QSlider, QCheckBox, QGroupBox, QDialogButtonBox, QBoxLayout,
 )
 from qgis.core import (
     Qgis, QgsAbstractLayoutIterator, QgsFeedback, QgsLayoutExporter, QgsLayoutUtils,
@@ -20,7 +21,7 @@ from qgis.core import (
 
 from .compat import (
     Checked, Unchecked, ItemIsUserCheckable, ExtendedSelection, WindowModal, Accepted,
-    Horizontal, Button_Ok, Button_Cancel,
+    Horizontal, Button_Ok, Button_Cancel, ChildPolished,
 )
 
 TITLE = "Export Selected Atlas Pages"
@@ -144,8 +145,15 @@ class AtlasPagesDialog(QDialog):
 
         self.format.setCurrentIndex(self.format.findData("jpg"))
 
+        self.no_raster_tiles = QCheckBox(RASTER_TILES_TEXT)
+        self.no_raster_tiles.setToolTip(RASTER_TILES_TIP)
+        self.no_raster_tiles.setChecked(_prop_bool(layout, "disableRasterTiles", False))
+        root.addWidget(self.no_raster_tiles)
+        self.format.currentIndexChanged.connect(self._update_pdf_options)
+        self._update_pdf_options()
+
         note = QLabel("Image formats ask for resolution, quality and cropping next; "
-                      "PDFs use the options saved in this layout. "
+                      "PDFs use the other options saved in this layout. "
                       "Separate files are named by the atlas output filename expression.")
         note.setWordWrap(True)
         note.setStyleSheet("color:#555; font-style:italic;")
@@ -221,6 +229,9 @@ class AtlasPagesDialog(QDialog):
     def format_key(self):
         return self.format.currentData()
 
+    def _update_pdf_options(self, _=None):
+        self.no_raster_tiles.setEnabled(self.format_key() in (SINGLE_PDF, SEPARATE_PDFS))
+
 
 def _prop_bool(layout, key, default):
     value = layout.customProperty(key, default)
@@ -244,6 +255,7 @@ def _pdf_settings(layout):
     s.appendGeoreference  = _prop_bool(layout, "pdfAppendGeoreference", True)
     s.exportMetadata      = _prop_bool(layout, "pdfIncludeMetadata", True)
     s.simplifyGeometries  = _prop_bool(layout, "pdfSimplify", True)
+    s.flags = _with_raster_tiles(s.flags, layout)
     text_format = layout.customProperty("pdfTextRenderFormat", None)
     if text_format is not None:
         s.textRenderFormat = type(s.textRenderFormat)(int(text_format))
@@ -253,6 +265,26 @@ def _pdf_settings(layout):
 _ANTIALIAS = getattr(QgsLayoutRenderContext, "FlagAntialiasing", None)
 if _ANTIALIAS is None:
     _ANTIALIAS = Qgis.LayoutRenderFlag.Antialiasing
+_NO_RASTER_TILES = getattr(QgsLayoutRenderContext, "FlagDisableTiledRasterLayerRenders", None)
+if _NO_RASTER_TILES is None:
+    _NO_RASTER_TILES = Qgis.LayoutRenderFlag.DisableTiledRasterLayerRenders
+RASTER_TILES_TEXT = "Disable tiled raster layer exports"
+RASTER_TILES_TIP = ("Render raster layers in one piece instead of tiles "
+                    "(avoids visible seams, uses more memory)")
+
+
+def _with_raster_tiles(flags, layout):
+    """flags with the layout's 'Disable tiled raster layer exports' option applied."""
+    if _prop_bool(layout, "disableRasterTiles", False):
+        return flags | _NO_RASTER_TILES
+    return flags & ~_NO_RASTER_TILES
+
+
+def set_raster_tiles_disabled(layout, disabled):
+    """Save the option (same key as QGIS's PDF export) and set the layout's render
+    flag, which QGIS's own image and PDF exports start their settings from."""
+    layout.setCustomProperty("disableRasterTiles", disabled)
+    layout.renderContext().setFlag(_NO_RASTER_TILES, disabled)
 _INCHES = Qgis.LayoutUnit.Inches if hasattr(Qgis, "LayoutUnit") else QgsUnitTypes.LayoutInches
 
 
@@ -267,6 +299,7 @@ def _image_settings(layout):
         s.flags = s.flags | _ANTIALIAS
     else:
         s.flags = s.flags & ~_ANTIALIAS
+    s.flags = _with_raster_tiles(s.flags, layout)
     if hasattr(s, "quality"):
         s.quality = int(layout.customProperty("imageQuality", 90))
     return s
@@ -326,8 +359,12 @@ class ImageOptionsDialog(QDialog):
         self.antialias.setChecked(bool(self._settings.flags & _ANTIALIAS))
         self.world_file = QCheckBox("Generate world file")
         self.world_file.setChecked(self._settings.generateWorldFile)
+        self.no_raster_tiles = QCheckBox(RASTER_TILES_TEXT)
+        self.no_raster_tiles.setToolTip(RASTER_TILES_TIP)
+        self.no_raster_tiles.setChecked(bool(self._settings.flags & _NO_RASTER_TILES))
         form.addRow(self.antialias)
         form.addRow(self.world_file)
+        form.addRow(self.no_raster_tiles)
         root.addWidget(opts)
 
         self.crop = QGroupBox("Crop to Content")
@@ -381,6 +418,8 @@ class ImageOptionsDialog(QDialog):
             s.flags = s.flags | _ANTIALIAS
         else:
             s.flags = s.flags & ~_ANTIALIAS
+        set_raster_tiles_disabled(lay, self.no_raster_tiles.isChecked())
+        s.flags = _with_raster_tiles(s.flags, lay)
         if hasattr(s, "quality"):
             s.quality = self.quality.value()
             lay.setCustomProperty("imageQuality", s.quality)
@@ -450,6 +489,8 @@ def run_atlas_export(designer):
     pages = dlg.selected_pages()
     key   = dlg.format_key()
     _last_pages[layout.name()] = {atlas.nameForPage(p) for p in pages}
+    if key in (SINGLE_PDF, SEPARATE_PDFS):
+        set_raster_tiles_disabled(layout, dlg.no_raster_tiles.isChecked())
 
     image_settings = None
     if key not in (SINGLE_PDF, SEPARATE_PDFS):
@@ -502,3 +543,68 @@ def run_atlas_export(designer):
         bar.pushInfo(TITLE, "Export canceled.")
     else:
         QMessageBox.warning(parent, TITLE, f"Export failed.\n\n{error}")
+
+
+class NativeExportHook(QObject):
+    """Adds 'Disable tiled raster layer exports' to QGIS's own Image Export Options
+    dialog (Export as Image / Export Atlas as Images) in one layout designer.
+
+    Both QGIS exports take their render flags from the layout once the dialog is
+    accepted, so setting the flag then is enough. Accepting QGIS's PDF options
+    sets it too, so the flag never lingers after being unticked there.
+    """
+
+    IMAGE_DIALOG = "QgsLayoutImageExportOptionsDialog"
+    PDF_DIALOG   = "QgsLayoutPdfExportOptionsDialog"
+
+    def __init__(self, layout, window):
+        super().__init__(window)
+        self._layout = layout
+        self._window = window
+        window.installEventFilter(self)
+
+    def remove(self):
+        self._window.removeEventFilter(self)
+        self.deleteLater()
+
+    def eventFilter(self, obj, event):
+        if event.type() == ChildPolished:
+            child = event.child()
+            kind = child.metaObject().className()
+            if kind in (self.IMAGE_DIALOG, self.PDF_DIALOG) and not child.property("mtt_hooked"):
+                child.setProperty("mtt_hooked", True)
+                dlg = child if isinstance(child, QDialog) else sip.cast(child, QDialog)
+                try:
+                    if kind == self.IMAGE_DIALOG:
+                        self._hook_image(dlg)
+                    else:
+                        self._hook_pdf(dlg)
+                except Exception:
+                    pass    # never break QGIS's own export over an extra option
+        return False
+
+    def _hook_image(self, dlg):
+        box = QCheckBox(RASTER_TILES_TEXT, dlg)
+        box.setToolTip(RASTER_TILES_TIP)
+        box.setChecked(_prop_bool(self._layout, "disableRasterTiles", False))
+        anchor = next((c for c in dlg.findChildren(QCheckBox)
+                       if "world file" in c.text().lower()), None)
+        target = anchor.parentWidget().layout() if anchor else None
+        if isinstance(target, QGridLayout):
+            target.addWidget(box, target.rowCount(), 0, 1, target.columnCount())
+        elif target is not None:
+            target.addWidget(box)
+        elif isinstance(dlg.layout(), QBoxLayout):
+            dlg.layout().insertWidget(dlg.layout().count() - 1, box)    # above the buttons
+        else:
+            dlg.layout().addWidget(box)
+        dlg.accepted.connect(
+            lambda: set_raster_tiles_disabled(self._layout, box.isChecked()))
+
+    def _hook_pdf(self, dlg):
+        box = next((c for c in dlg.findChildren(QCheckBox)
+                    if c.text().startswith("Disable tiled raster")), None)
+        if box is not None:
+            dlg.accepted.connect(
+                lambda: set_raster_tiles_disabled(self._layout, box.isChecked()))
+
