@@ -149,8 +149,6 @@ class AtlasPagesDialog(QDialog):
         self.no_raster_tiles.setToolTip(RASTER_TILES_TIP)
         self.no_raster_tiles.setChecked(_prop_bool(layout, "disableRasterTiles", False))
         root.addWidget(self.no_raster_tiles)
-        self.format.currentIndexChanged.connect(self._update_pdf_options)
-        self._update_pdf_options()
 
         note = QLabel("Image formats ask for resolution, quality and cropping next; "
                       "PDFs use the other options saved in this layout. "
@@ -228,9 +226,6 @@ class AtlasPagesDialog(QDialog):
 
     def format_key(self):
         return self.format.currentData()
-
-    def _update_pdf_options(self, _=None):
-        self.no_raster_tiles.setEnabled(self.format_key() in (SINGLE_PDF, SEPARATE_PDFS))
 
 
 def _prop_bool(layout, key, default):
@@ -359,12 +354,8 @@ class ImageOptionsDialog(QDialog):
         self.antialias.setChecked(bool(self._settings.flags & _ANTIALIAS))
         self.world_file = QCheckBox("Generate world file")
         self.world_file.setChecked(self._settings.generateWorldFile)
-        self.no_raster_tiles = QCheckBox(RASTER_TILES_TEXT)
-        self.no_raster_tiles.setToolTip(RASTER_TILES_TIP)
-        self.no_raster_tiles.setChecked(bool(self._settings.flags & _NO_RASTER_TILES))
         form.addRow(self.antialias)
         form.addRow(self.world_file)
-        form.addRow(self.no_raster_tiles)
         root.addWidget(opts)
 
         self.crop = QGroupBox("Crop to Content")
@@ -418,8 +409,6 @@ class ImageOptionsDialog(QDialog):
             s.flags = s.flags | _ANTIALIAS
         else:
             s.flags = s.flags & ~_ANTIALIAS
-        set_raster_tiles_disabled(lay, self.no_raster_tiles.isChecked())
-        s.flags = _with_raster_tiles(s.flags, lay)
         if hasattr(s, "quality"):
             s.quality = self.quality.value()
             lay.setCustomProperty("imageQuality", s.quality)
@@ -489,8 +478,7 @@ def run_atlas_export(designer):
     pages = dlg.selected_pages()
     key   = dlg.format_key()
     _last_pages[layout.name()] = {atlas.nameForPage(p) for p in pages}
-    if key in (SINGLE_PDF, SEPARATE_PDFS):
-        set_raster_tiles_disabled(layout, dlg.no_raster_tiles.isChecked())
+    set_raster_tiles_disabled(layout, dlg.no_raster_tiles.isChecked())
 
     image_settings = None
     if key not in (SINGLE_PDF, SEPARATE_PDFS):
