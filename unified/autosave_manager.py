@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AutoSaveManager — persistent timer that calls QgsProject.write() on a schedule.
+AutoSaveManager — persistent timer that saves the project on a schedule.
 
 Settings (enabled, interval) are stored in QgsSettings so they survive
 QGIS restarts.  The timer keeps running even when the dialog is closed.
@@ -9,7 +9,10 @@ QGIS restarts.  The timer keeps running even when the dialog is closed.
 from datetime import datetime
 
 from qgis.PyQt.QtCore import QTimer
+from qgis.PyQt.QtWidgets import QApplication, QMessageBox
 from qgis.core import QgsProject, QgsSettings
+
+from .compat import MsgBox_Ok
 
 
 class AutoSaveManager:
@@ -95,7 +98,20 @@ class AutoSaveManager:
                 "Project has no file path — please save it manually first (Ctrl+S)."
             )
             return
-        if project.write():
+        # Save through QGIS's own action, not project.write(): QGIS remembers the
+        # file's modified time only for its own saves, and would otherwise ask
+        # "Project Has Changed on Disk" at the next save
+        # The save blocks while QGIS shows "Project Has Changed on Disk", so a
+        # timer running alongside it answers OK for auto-saves
+        confirm = QTimer()
+        confirm.setInterval(100)
+        confirm.timeout.connect(self._confirm_overwrite)
+        confirm.start()
+        try:
+            self.iface.actionSaveProject().trigger()
+        finally:
+            confirm.stop()
+        if not project.isDirty():
             self.last_save = datetime.now().strftime("%H:%M:%S")
             self.iface.messageBar().pushSuccess(
                 "Auto-Save", f"Project saved at {self.last_save}"
@@ -105,6 +121,16 @@ class AutoSaveManager:
             self.iface.messageBar().pushCritical(
                 "Auto-Save", "Failed to save the project."
             )
+
+    @staticmethod
+    def _confirm_overwrite():
+        for w in QApplication.topLevelWidgets():
+            if (isinstance(w, QMessageBox) and w.isVisible()
+                    and ("Changed on Disk" in w.windowTitle()
+                         or "modified externally" in w.text())):
+                ok = w.button(MsgBox_Ok)
+                if ok is not None:
+                    ok.click()
 
     def _load_settings(self):
         s = QgsSettings()

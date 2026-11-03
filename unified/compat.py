@@ -83,6 +83,7 @@ if QT6:
     # ── QMessageBox ───────────────────────────────────────────────────────────
     Button_Yes            = QMessageBox.StandardButton.Yes
     Button_No             = QMessageBox.StandardButton.No
+    MsgBox_Ok             = QMessageBox.StandardButton.Ok
 
     # ── QDialog ───────────────────────────────────────────────────────────────
     Accepted              = QDialog.DialogCode.Accepted
@@ -163,6 +164,7 @@ else:  # Qt 5 / PyQt5
     # ── QMessageBox ───────────────────────────────────────────────────────────
     Button_Yes            = QMessageBox.Yes
     Button_No             = QMessageBox.No
+    MsgBox_Ok             = QMessageBox.Ok
 
     # ── QDialog ───────────────────────────────────────────────────────────────
     Accepted              = QDialog.Accepted
