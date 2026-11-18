@@ -13,7 +13,7 @@ from qgis.PyQt.QtWidgets import (
     QLineEdit, QPushButton, QAbstractItemView,
     QInputDialog, QMessageBox,
     QDialog, QDialogButtonBox,
-    QMenu,
+    QMenu, QApplication,
 )
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QBrush, QColor, QFont
@@ -529,10 +529,11 @@ class ThemePresenterDock(QDockWidget):
         if item is not None:
             self._list.setCurrentItem(item)
         menu = QMenu(self._list)
-        act_apply = act_replace = act_rename = act_delete = None
+        act_apply = act_replace = act_copy = act_rename = act_delete = None
         if name:
             act_apply   = menu.addAction("✅  Apply Theme")
             act_replace = menu.addAction("🔄  Replace with Current Canvas…")
+            act_copy    = menu.addAction("📋  Copy Theme Name")
             menu.addSeparator()
             act_rename  = menu.addAction("✏️  Rename…")
             act_delete  = menu.addAction("🗑  Delete…")
@@ -551,6 +552,9 @@ class ThemePresenterDock(QDockWidget):
             self._on_item_clicked(item, 0)
         elif chosen is act_replace:
             self._replace_theme(name)
+        elif chosen is act_copy:
+            QApplication.clipboard().setText(name)
+            self._status.setText(f"📋  Copied: <b>{name}</b>")
         elif chosen is act_rename:
             self._on_rename()
         elif chosen is act_delete:
